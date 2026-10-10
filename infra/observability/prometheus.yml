@@ -1,0 +1,14 @@
+# Scrapes the API's /metrics: its own request/search/chat latency histograms and cache
+# counters, plus language-model usage for every process (read from the llm_usage table).
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: research-intelligence-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["backend:8000"]
+    # When the backend has METRICS_TOKEN set, mount the token and uncomment:
+    # authorization:
+    #   credentials_file: /etc/prometheus/metrics-token

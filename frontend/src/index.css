@@ -1,0 +1,270 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/jetbrains-mono';
+
+/* Dark mode is driven by <html data-theme="dark">, set by the theme store. */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+/* ---------------------------------------------------------------------------
+   Design tokens. Components use the semantic names only (bg-surface,
+   text-muted, border-border, bg-primary ...), never raw palette colors.
+   All text/background pairs meet WCAG AA (4.5:1) in both themes.
+   ------------------------------------------------------------------------- */
+:root {
+  --bg: #fafaf9;
+  --surface: #ffffff;
+  --surface-muted: #f4f4f2;
+  --surface-elevated: #ffffff;
+  --border: #e5e4e0;
+  --border-strong: #d4d3ce;
+  --text: #1b1b19;
+  --text-muted: #62615c;
+  --text-subtle: #6f6e68; /* >= 4.6:1 on every light surface (axe audit, Phase 16) */
+
+  --primary: #3551d4;
+  --primary-hover: #2b44b8;
+  --primary-soft: #eef1fd;
+  --primary-fg: #ffffff;
+  --secondary: #0f766e;
+  --secondary-soft: #e8f5f3;
+
+  --success: #1d7a4b;
+  --success-soft: #e9f6ee;
+  --warning: #9a5a06;
+  --warning-soft: #fdf4e3;
+  --error: #bf3329;
+  --on-error: #ffffff;
+  --error-soft: #fcecea;
+  --info: #2459c9;
+  --info-soft: #eaf1fd;
+
+  --ring: #3551d4;
+  --shadow-sm: 0 1px 2px rgb(20 20 18 / 0.05);
+  --shadow-md: 0 4px 16px -4px rgb(20 20 18 / 0.1), 0 1px 3px rgb(20 20 18 / 0.06);
+  --shadow-lg: 0 16px 48px -12px rgb(20 20 18 / 0.22);
+
+  /* Knowledge graph node types (categorical; distinguishable in both themes). */
+  --kg-paper: #3551d4;
+  --kg-author: #0f766e;
+  --kg-institution: #64748b;
+  --kg-dataset: #b45309;
+  --kg-model: #7c3aed;
+  --kg-method: #c0266d;
+  --kg-metric: #0e7490;
+  --kg-task: #4d7c0f;
+  --kg-topic: #c2410c;
+  --kg-edge: #c9c8c2;
+  /* Chart series (validated: adjacent CVD ΔE ≥ 9.1, normal-vision ≥ 22.9; slots 3–4 need the table view). */
+  --viz-1: #2a78d6;
+  --viz-2: #eb6834;
+  --viz-3: #1baf7a;
+  --viz-4: #eda100;
+  --viz-grid: #e5e4e0;
+
+  color-scheme: light;
+}
+
+[data-theme='dark'] {
+  --bg: #111113;
+  --surface: #18181b;
+  --surface-muted: #1f1f23;
+  --surface-elevated: #222227;
+  --border: #2c2c32;
+  --border-strong: #3a3a41;
+  --text: #ececef;
+  --text-muted: #a2a2ab;
+  --text-subtle: #85858e;
+
+  --primary: #7d93ff;
+  --primary-hover: #97a8ff;
+  --primary-soft: #1e2440;
+  --primary-fg: #0d1022;
+  --secondary: #4fc1b5;
+  --secondary-soft: #14302d;
+
+  --success: #4cc38a;
+  --success-soft: #13291e;
+  --warning: #e3a748;
+  --warning-soft: #2e2413;
+  --error: #f2776c;
+  --on-error: #1f0b09; /* white on this light red was 2.75:1 */
+  --error-soft: #331a18;
+  --info: #7aa7ff;
+  --info-soft: #172542;
+
+  --ring: #7d93ff;
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 4px 16px -4px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.4);
+  --shadow-lg: 0 16px 48px -12px rgb(0 0 0 / 0.7);
+
+  --kg-paper: #7d93ff;
+  --kg-author: #4fc1b5;
+  --kg-institution: #94a3b8;
+  --kg-dataset: #f0a94b;
+  --kg-model: #b49cff;
+  --kg-method: #f472b6;
+  --kg-metric: #4fc3dc;
+  --kg-task: #9fd45a;
+  --kg-topic: #fb8a55;
+  --kg-edge: #3f3f46;
+  --viz-1: #3987e5;
+  --viz-2: #d95926;
+  --viz-3: #199e70;
+  --viz-4: #c98500;
+  --viz-grid: #2c2c32;
+
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-surface-elevated: var(--surface-elevated);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text);
+  --color-muted: var(--text-muted);
+  --color-subtle: var(--text-subtle);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-soft: var(--primary-soft);
+  --color-primary-fg: var(--primary-fg);
+  --color-secondary: var(--secondary);
+  --color-secondary-soft: var(--secondary-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-error: var(--error);
+  --color-on-error: var(--on-error);
+  --color-error-soft: var(--error-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-ring: var(--ring);
+
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, 'Cascadia Code', monospace;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+}
+
+/* Typography scale: Display, H1, H2, H3, Body, Small, Caption, Code. */
+@utility text-display {
+  font-size: 2.25rem;
+  line-height: 2.625rem;
+  letter-spacing: -0.022em;
+  font-weight: 650;
+}
+@utility text-h1 {
+  font-size: 1.75rem;
+  line-height: 2.25rem;
+  letter-spacing: -0.018em;
+  font-weight: 650;
+}
+@utility text-h2 {
+  font-size: 1.375rem;
+  line-height: 1.875rem;
+  letter-spacing: -0.012em;
+  font-weight: 600;
+}
+@utility text-h3 {
+  font-size: 1.0625rem;
+  line-height: 1.5rem;
+  letter-spacing: -0.006em;
+  font-weight: 600;
+}
+@utility text-body {
+  font-size: 0.9375rem;
+  line-height: 1.5rem;
+}
+@utility text-small {
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+}
+@utility text-caption {
+  font-size: 0.75rem;
+  line-height: 1rem;
+  letter-spacing: 0.01em;
+}
+
+/* Font-size preference scales everything expressed in rem. */
+html {
+  font-size: 100%;
+}
+html[data-font-scale='sm'] {
+  font-size: 93.75%;
+}
+html[data-font-scale='lg'] {
+  font-size: 112.5%;
+}
+
+@layer base {
+  body {
+    @apply bg-bg text-text text-body font-sans antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+  code,
+  kbd,
+  pre {
+    @apply font-mono;
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--primary) 25%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@utility animate-fade-in {
+  animation: fade-in 160ms ease-out both;
+}
+
+/* Blinking caret after the last block of an answer that is still being written. */
+@keyframes caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+.streaming-caret > div > :last-child::after {
+  content: '';
+  display: inline-block;
+  width: 0.45em;
+  height: 1em;
+  margin-left: 0.15em;
+  vertical-align: -0.12em;
+  border-radius: 1px;
+  background: var(--primary);
+  animation: caret-blink 1s steps(1) infinite;
+}

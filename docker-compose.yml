@@ -1,0 +1,124 @@
+# Full stack: `docker compose up --build`, then open http://localhost:8080
+# With Prometheus + Grafana: `docker compose --profile observability up --build`
+#   Grafana http://localhost:3000 (admin / ${GRAFANA_PASSWORD:-admin}), Prometheus :9090
+#
+# Models run on CPU by default. NVIDIA GPU: build with
+#   docker compose build --build-arg TORCH_INDEX=https://download.pytorch.org/whl/cu124
+# and give the worker the GPU (see docs/DEVELOPMENT.md).
+name: research-intelligence
+
+x-backend-env: &backend-env
+  ENVIRONMENT: ${ENVIRONMENT:-development}
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-research}:${POSTGRES_PASSWORD:-research}@postgres:5432/${POSTGRES_DB:-research}
+  REDIS_URL: redis://redis:6379/0
+  QDRANT_URL: http://qdrant:6333
+  JOB_BACKEND: celery
+  JWT_SECRET: ${JWT_SECRET:-dev-insecure-change-me-dev-insecure-change-me}
+  LOG_JSON: "true"
+  LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+  LLM_MODEL: ${LLM_MODEL:-qwen2.5:3b}
+  # Ollama running on the host machine (install from https://ollama.com).
+  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  VERIFIER_PROVIDER: ${VERIFIER_PROVIDER:-nli}
+  EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-sentence_transformers}
+  EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+  CHUNKING_STRATEGY: ${CHUNKING_STRATEGY:-section_aware}
+  MODEL_DEVICE: ${MODEL_DEVICE:-auto}
+  RERANKER_PROVIDER: ${RERANKER_PROVIDER:-cross_encoder}
+  RERANKER_MODEL: ${RERANKER_MODEL:-cross-encoder/ms-marco-MiniLM-L-6-v2}
+  MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-50}
+  CORS_ORIGINS: http://localhost:8080
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-research}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-research}
+      POSTGRES_DB: ${POSTGRES_DB:-research}
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-research}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redis-data:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    volumes: [qdrant-data:/qdrant/storage]
+    ports: ["6333:6333"]
+
+  backend:
+    # Every other setting in .env (FREE_TIER, LLM_API_BASE, METRICS_TOKEN, ALLOW_*, ...) reaches
+    # the app this way; `environment` below wins where both set a value. Needs Compose 2.24+.
+    env_file: &backend-env-file
+      - path: .env
+        required: false
+    build: { context: ., dockerfile: infra/docker/backend.Dockerfile }
+    environment: *backend-env
+    volumes: [file-storage:/app/data, model-cache:/app/models]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      qdrant: { condition: service_started }
+    extra_hosts: ["host.docker.internal:host-gateway"]  # reach Ollama on the host (Linux)
+    ports: ["8000:8000"]
+
+  worker:
+    env_file: *backend-env-file
+    build: { context: ., dockerfile: infra/docker/backend.Dockerfile }
+    command: ["celery", "-A", "app.workers.celery_app", "worker", "--loglevel=INFO", "--concurrency=2"]
+    environment: *backend-env
+    volumes: [file-storage:/app/data, model-cache:/app/models]
+    depends_on:
+      backend: { condition: service_healthy }  # migrations have run
+    healthcheck:
+      disable: true
+
+  frontend:
+    build: { context: ., dockerfile: infra/docker/frontend.Dockerfile }
+    depends_on: [backend]
+    ports: ["8080:80"]
+
+  # --- observability profile ------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    profiles: [observability]
+    volumes:
+      - ./infra/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    depends_on: [backend]
+    ports: ["9090:9090"]
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    profiles: [observability]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./infra/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on: [prometheus]
+    ports: ["3000:3000"]
+
+volumes:
+  postgres-data:
+  redis-data:
+  qdrant-data:
+  file-storage:
+  model-cache:
+  prometheus-data:
+  grafana-data:

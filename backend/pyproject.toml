@@ -1,0 +1,108 @@
+[project]
+name = "research-intelligence-backend"
+version = "0.1.0"
+description = "AI Research Intelligence Platform — API, ingestion, retrieval and RAG services"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.8",
+    "pydantic-settings>=2.4",
+    "email-validator>=2.2",
+    "sqlalchemy[asyncio]>=2.0.32",
+    "alembic>=1.13",
+    "asyncpg>=0.29",
+    "aiosqlite>=0.20",
+    "argon2-cffi>=23.1",
+    "pyjwt>=2.9",
+    "structlog>=24.4",
+    "redis>=5.0",
+    "httpx>=0.27",
+    "cryptography>=43",  # encrypts the API keys users save (Fernet)
+    "python-multipart>=0.0.9",
+    # Document ingestion
+    "pymupdf>=1.24",
+    "python-docx>=1.1",
+    "beautifulsoup4>=4.12",
+    # PyMuPDF needs the MSVC runtime; bundled into the venv on Windows.
+    "msvc-runtime>=14.40; sys_platform == 'win32'",
+    # Retrieval
+    "qdrant-client>=1.12",
+    "numpy>=1.26",
+    "snowballstemmer>=2.2",  # BM25 term normalization (pure Python)
+    # Knowledge graph (in-memory; a Neo4j store can implement the same GraphStore)
+    "networkx>=3.3",
+]
+
+[project.optional-dependencies]
+# Heavy ML / worker dependencies are added in the phases that need them
+# (see docs/ROADMAP.md) so the API image stays small until then.
+worker = ["celery>=5.4"]
+# Local ML models (embeddings, reranking). Install torch first for your platform:
+#   CPU:  pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   CUDA: pip install torch --index-url https://download.pytorch.org/whl/cu124
+ml = ["sentence-transformers>=3.0", "torch>=2.3"]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "ASYNC", "RUF"]
+ignore = ["B008"]  # FastAPI's Depends() in defaults is idiomatic
+
+[tool.ruff.lint.per-file-ignores]
+# Text-processing code matches typographic Unicode on purpose (dashes, math symbols, spaces).
+"app/services/ingestion/**" = ["RUF001"]
+"app/services/chunking/**" = ["RUF001", "RUF002"]
+# Hand-written guide prose and generated-file templates read better unwrapped; the starter is standalone.
+"app/services/projects/guide.py" = ["E501"]
+"app/services/projects/codegen.py" = ["E501"]
+"app/services/projects/systems_template.py" = ["E501"]
+"app/services/projects/starter/**" = ["E501", "I001"]
+"app/services/retrieval/**" = ["RUF001", "RUF002"]  # math notation in docstrings
+"app/services/knowledge/**" = ["RUF001", "RUF002", "RUF003"]  # dashes in names, math in docs
+"app/services/analysis/**" = ["RUF001", "RUF002", "RUF003"]  # typographic quotes and dashes
+"app/services/analysis/writing.py" = ["E501", "RUF001", "RUF002", "RUF003"]  # prompt prose
+"app/services/analysis/gaps.py" = ["E501", "RUF001", "RUF002", "RUF003"]  # prompt prose
+"app/services/analysis/deep_research.py" = ["E501", "RUF001", "RUF002", "RUF003"]  # prompt prose
+"app/services/projects/**" = ["RUF001", "RUF002", "RUF003"]  # typographic quotes and dashes
+"app/services/projects/generate.py" = ["E501", "RUF001", "RUF002", "RUF003"]  # prompt prose
+"app/services/evaluation/service.py" = ["E501"]  # prompt prose
+"app/services/rag/**" = ["RUF001", "RUF002"]  # typographic dashes in regexes, math in docs
+"app/services/rag/prompt.py" = ["E501"]  # prompt prose
+"app/services/summaries/prompt.py" = ["E501"]  # prompt prose
+"app/services/comparisons/prompt.py" = ["E501"]  # prompt prose
+"app/services/rag/query.py" = ["E501"]  # intent patterns read best on one line
+"app/demo/sample_papers.py" = ["E501", "RUF001"]  # prose content
+"tests/**" = ["ASYNC240", "RUF001", "E501"]  # filesystem checks; fixture prose
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+ignore_missing_imports = true
+
+# The starter project handed to users: standalone scripts with flat imports, tested by running them.
+[[tool.mypy.overrides]]
+module = "app.services.projects.starter.*"
+ignore_errors = true
