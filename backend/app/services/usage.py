@@ -46,6 +46,7 @@ JOB_FEATURES = {
     "topics.name": "topics",
     "eval.run": "evaluation",
     "eval.generate": "evaluation",
+    "agent.run_watch": "watch",
 }
 
 

@@ -46,6 +46,7 @@ async def list_conversations(
     user: CurrentUser,
     db: DbSession,
     document_id: uuid.UUID | None = Query(default=None, description="Chats about this paper"),
+    single_paper: bool = Query(default=False, description="Only chats scoped to this paper alone"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> Page[ConversationOut]:
@@ -53,6 +54,14 @@ async def list_conversations(
     rows = list((await db.execute(base.order_by(Conversation.updated_at.desc()))).scalars())
     if document_id is not None:  # JSON list membership, portable across SQLite/PostgreSQL
         rows = [c for c in rows if str(document_id) in (c.document_ids or [])]
+    if single_paper:
+        if document_id is None:
+            raise ValidationError("Choose a paper when filtering for single-paper chats.")
+        rows = [
+            c
+            for c in rows
+            if c.scope == ConversationScope.PAPERS and (c.document_ids or []) == [str(document_id)]
+        ]
     return Page(
         items=[ConversationOut.model_validate(c) for c in rows[offset : offset + limit]],
         total=len(rows),

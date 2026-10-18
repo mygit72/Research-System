@@ -187,9 +187,25 @@ GUIDES: dict[str, dict[str, Any]] = {
     },
     "experiments": {
         "title": "Experiments",
-        "why": "Turns your choices into a concrete list of runs and dates. Without it, experiments grow "
-        "until the deadline arrives.",
+        "why": "Turns a specific paper claim into a test with visible assumptions and results, then turns "
+        "your method choices into a concrete list of runs and dates.",
         "actions": [
+            _a(
+                "Choose a claim and find its evidence",
+                "Write a claim about scaled dot-product attention and search the papers linked to this project. "
+                "Select the passages that actually state the mechanism before running the stress test.",
+            ),
+            _a(
+                "Run the scaling stress test",
+                "Compare the paper's 1/√dₖ scaling with no scaling over multiple key dimensions. "
+                "The simulator fixes its random seed and shows saturation, entropy and a softmax-gradient proxy.",
+            ),
+            _a(
+                "Analyze your run results",
+                "Import results/results.csv from the generated experiment runner. Compare systems only on "
+                "shared seeds, inspect TODO/error rows, and read the paired interval as a stability diagnostic. "
+                "With fewer than five seeds it is exploratory; decide whether higher or lower is better for each metric.",
+            ),
             _a(
                 "Generate the plan",
                 "One main comparison per dataset (your approach against the baselines), "
@@ -211,13 +227,19 @@ GUIDES: dict[str, dict[str, Any]] = {
                 "ablations. Don't write the paper around results you haven't got.",
             ),
         ],
-        "expected": "A list of experiments, each with goal, setup and metrics, and dated milestones.",
+        "expected": "A cited claim test, an optional saved results analysis with paired seed comparisons, "
+        "and an editable list of project experiments and dated milestones.",
         "checks": [
+            "Do the selected passages actually support the paper claim you entered?",
+            "Does the scaling effect persist when you change the seed or key dimensions?",
+            "Do your system comparisons use the same seeds and enough runs to interpret their uncertainty?",
             "Does every main comparison contain your approach and at least one baseline?",
             "Is there an ablation for each component you claim matters?",
             "Do the milestones leave time for a failed first run?",
         ],
         "pitfalls": [
+            "Treating a synthetic mechanism demo as a reproduction of the paper's trained model or benchmarks.",
+            "Selecting a passage that mentions attention but does not state the claim being tested.",
             "No ablation: you can't say which part of your approach does the work.",
             "Planning for one seed — plan three so you can report the spread.",
             "Setting the deadline from what you hope, not from how long a run takes.",
@@ -263,55 +285,42 @@ GUIDES: dict[str, dict[str, Any]] = {
     },
     "code": {
         "title": "Starter code",
-        "why": "Between a plan and results there is code: loading data, running systems, computing metrics, "
-        "keeping results. The tedious, easy-to-get-wrong parts are written and tested for you; the parts "
-        "that are your research are left for you.",
+        "why": "Turn a paper and your research question into a first implementation you can inspect. "
+        "The model draft shows the passages it used beside the code, so you can trace design choices back "
+        "to the source and see which details still need your decision.",
         "actions": [
             _a(
-                "Download and open it",
-                "A small Python project: README, config, systems, metrics, data, a "
-                "runner and tests.",
+                "Generate the model draft",
+                "The model uses your project question, idea and hypothesis with retrieved passages from "
+                "your papers. Open model.py to see the source excerpts and inline passage references.",
             ),
             _a(
-                "Run the smoke test",
-                "`python run_experiments.py --smoke` and `python -m pytest`. This checks the "
-                "machinery on a toy dataset before you add anything.",
+                "Follow each design choice",
+                "Compare the code comments with the linked paper passages. Treat analogies and "
+                "inferences as explanations, and keep TODOs where the paper leaves implementation details open.",
             ),
             _a(
-                "Reproduce the baselines",
-                "BM25, DPR and Contriever (and hybrid / reranked variants) run as they are, from "
-                "public pretrained checkpoints; the others are stubs. Check each number against "
-                "the paper's — if it is far off, suspect your setup before the paper.",
+                "Edit and check syntax",
+                "Change the draft in the project editor, use Check syntax for Python parsing, then save it "
+                "to this project. A syntax check does not execute the code or verify its behavior.",
             ),
             _a(
-                "Make the approach yours",
-                "`YourApproach` starts as a first runnable version assembled from what you chose to "
-                "build on (or a stub if nothing maps). Run it unchanged and keep the result — your "
-                "idea has to beat it. Then change `rank()` where the file says “Your idea goes "
-                "here”: that is the part no one can generate for you.",
-            ),
-            _a(
-                "Check the datasets",
-                "SQuAD, MS MARCO, HotpotQA, TriviaQA and NQ-Open come with loaders (`pip install "
-                "datasets`); the README says what each one's passages and relevance mean. TriviaQA "
-                "and NQ-Open have no passages, so only answer metrics apply to them. Any other "
-                "dataset fails loudly until you write its loader.",
-            ),
-            _a(
-                "Run the experiments",
-                "Results land in results/results.csv with mean ± spread over seeds.",
+                "Decide what to test next",
+                "The model file is a learning scaffold and is not wired into the experiment runner. "
+                "Choose a dataset, define a measurable hypothesis, and connect the model to an experiment "
+                "before interpreting results.",
             ),
         ],
-        "expected": "A project whose smoke test passes today, and whose TODOs are exactly the research left.",
+        "expected": "An editable model draft with traceable paper evidence, explicit TODOs and valid Python syntax.",
         "checks": [
-            "Smoke test and pytest pass before you change anything.",
-            "Your reproduced baselines are close to the published numbers.",
-            "Your approach beats the Random sanity system by a wide margin.",
+            "Does each important implementation choice point to a supplied paper passage?",
+            "Are unspecified dimensions, training settings and data choices left as TODOs?",
+            "Did you distinguish what the paper states from what the code infers?",
         ],
         "pitfalls": [
-            "Reporting a number from a system that wasn't implemented — the runner refuses to; keep it that way.",
-            "Changing the metric code to make results look better — metrics.py has hand-checked tests.",
-            "Tuning on the test split.",
+            "Treating a source citation as proof that the generated code is correct.",
+            "Assuming valid syntax means the architecture runs or reproduces the paper's results.",
+            "Filling in missing paper details with plausible defaults instead of checking the original source.",
         ],
     },
 }

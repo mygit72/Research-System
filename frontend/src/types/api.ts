@@ -1226,6 +1226,250 @@ export interface ProjectMilestone {
   done: boolean
 }
 
+export interface ReferenceAttentionVariant {
+  key: string
+  label: string
+  formula: string
+  score_matrix: number[][]
+  attention_weights: number[][]
+  output: number[][]
+  mean_entropy_nats: number
+}
+
+export interface ReferenceAttentionRun {
+  id: string
+  created_at: string
+  runner: string
+  seed: number
+  user_score_divisor: number
+  tokens: string[]
+  tensor_shapes: Record<string, number[]>
+  inputs: Record<string, number[][]>
+  variants: ReferenceAttentionVariant[]
+  interpretation: string
+  limitation: string
+  question: string
+  hypothesis: string
+  draft_model?: string | null
+  evidence_sources: Report['sources']
+}
+
+export interface ClaimEvidencePassage {
+  chunk_id: string
+  document_id: string
+  title: string
+  year: number | null
+  section_title: string
+  page_start: number
+  page_end: number
+  char_start: number
+  boxes: ChunkInfo['boxes']
+  quote: string
+}
+
+export interface ClaimEvidenceSearch {
+  claim: string
+  status: 'ok' | 'no_results' | 'empty_library'
+  paper_count: number
+  passages: ClaimEvidencePassage[]
+}
+
+export interface AttentionStressMetrics {
+  logit_std: number
+  mean_entropy_nats: number
+  normalized_entropy: number
+  mean_max_probability: number
+  saturated_query_rate: number
+  mean_softmax_gradient_proxy: number
+}
+
+export interface AttentionDimensionResult {
+  key_dimension: number
+  paper_scaled: AttentionStressMetrics
+  unscaled: AttentionStressMetrics
+}
+
+export interface ClaimStressTestRun {
+  id: string
+  created_at: string
+  runner: string
+  seed: number
+  claim: string
+  question: string
+  hypothesis: string
+  dimensions: number[]
+  query_count: number
+  key_count: number
+  saturation_threshold: number
+  results: AttentionDimensionResult[]
+  largest_dimension_example: {
+    key_dimension: number
+    paper_scaled: number[]
+    unscaled: number[]
+  }
+  interpretation: string
+  assumptions: string[]
+  limitation: string
+  evidence: ClaimEvidencePassage[]
+}
+
+export interface ExperimentResultSummary {
+  experiment: string
+  dataset: string
+  system: string
+  metric: string
+  seed_count: number
+  mean: number
+  std: number
+}
+
+export interface ExperimentResultComparison {
+  experiment: string
+  dataset: string
+  metric: string
+  system_a: string
+  system_b: string
+  paired_seed_count: number
+  mean_difference: number
+  ci95_lower: number | null
+  ci95_upper: number | null
+}
+
+export interface ExperimentResultsAnalysis {
+  id: string
+  created_at: string
+  filename: string
+  rows_seen: number
+  rows_analyzed: number
+  status_counts: Record<string, number>
+  issues: { row: number; status: string; system: string; metric: string; note: string }[]
+  summaries: ExperimentResultSummary[]
+  comparisons: ExperimentResultComparison[]
+  notes: string[]
+}
+
+export type PaperRunMatchStatus = 'within_tolerance' | 'diverged' | 'not_comparable'
+
+export interface PaperRunMatch {
+  id: string
+  created_at: string
+  status: PaperRunMatchStatus
+  alignment: 'exact' | 'user_mapped' | 'not_comparable'
+  label_mismatches: { field: string; paper: string; run: string }[]
+  split_matches: boolean
+  mapping_note: string | null
+  reported_mean: number
+  reproduced_mean: number
+  difference: number
+  absolute_difference: number
+  relative_difference_percent: number | null
+  tolerance: number
+  paper: {
+    document_id: string
+    title: string
+    year: number | null
+    chunk_id: string
+    section_title: string
+    page_start: number
+    page_end: number
+    char_start: number
+    boxes: ChunkInfo['boxes']
+    quote: string
+    kind: string
+  }
+  reported: {
+    dataset: string
+    system: string
+    metric: string
+    split: string
+    mean: number
+    std: number | null
+  }
+  run: {
+    analysis_id: string
+    filename: string
+    experiment: string
+    dataset: string
+    system: string
+    metric: string
+    split: string
+    mean: number
+    std: number
+    seed_count: number
+  }
+}
+
+export interface PaperRunMatchRequest {
+  result_analysis_id: string
+  run_experiment: string
+  run_dataset: string
+  run_system: string
+  run_metric: string
+  run_split: string
+  evidence_chunk_id: string
+  paper_dataset: string
+  paper_system: string
+  paper_metric: string
+  paper_split: string
+  reported_mean: number
+  reported_std?: number
+  tolerance: number
+  map_labels: boolean
+  mapping_note?: string
+}
+
+export interface PredictionPassageSnippet {
+  index: number
+  text: string
+  relevant?: boolean
+}
+
+export interface PredictionAnalysisRun {
+  seed: string
+  score: number | null
+  answer: string
+  used_passages: PredictionPassageSnippet[]
+  retrieved_passages: PredictionPassageSnippet[]
+}
+
+export interface PredictionAnalysisSystem {
+  system: string
+  mean_score: number | null
+  scored_seeds: number
+  run_count: number
+  runs: PredictionAnalysisRun[]
+}
+
+export interface PredictionHardCase {
+  experiment: string
+  dataset: string
+  example_id: string
+  question: string
+  reference_answers: string[]
+  reference_passages: PredictionPassageSnippet[]
+  systems: PredictionAnalysisSystem[]
+  best_system_score: number | null
+  score_spread: number | null
+}
+
+export interface PredictionAnalysis {
+  id: string
+  created_at: string
+  filename: string
+  metric: string
+  higher_is_better: boolean
+  records_seen: number
+  records_scored: number
+  records_without_metric: number
+  example_count: number
+  systems: string[]
+  metrics: string[]
+  summaries: { system: string; scored_predictions: number; mean_score: number }[]
+  hard_case_count: number
+  cases: PredictionHardCase[]
+  notes: string[]
+}
+
 export interface ProjectMethodsChoice {
   datasets: string[]
   baselines: string[]
@@ -1248,13 +1492,36 @@ export interface ProjectSteps {
     chosen: ProjectMethodsChoice
     paper_count?: number
   }
-  experiments: { items: ProjectExperiment[]; milestones: ProjectMilestone[]; deadline: string | null }
+  experiments: {
+    items: ProjectExperiment[]
+    milestones: ProjectMilestone[]
+    deadline: string | null
+    reference_run?: ReferenceAttentionRun | null
+    claim_runs?: ClaimStressTestRun[]
+    result_analyses?: ExperimentResultsAnalysis[]
+    paper_run_matches?: PaperRunMatch[]
+    prediction_analyses?: PredictionAnalysis[]
+  }
   outline: {
     status: 'idle' | 'running' | 'ready' | 'failed'
     sections: ReportSection[]
     sources: Report['sources']
     error: string | null
   }
+  code: {
+    status: 'idle' | 'running' | 'ready' | 'failed'
+    drafts: Record<string, ProjectCodeDraft>
+    note: string | null
+    error: string | null
+  }
+}
+
+export interface ProjectCodeDraft {
+  status: 'drafted' | 'insufficient'
+  code: string
+  sources: Report['sources']
+  note: string
+  model?: string
 }
 
 export type GuideStep = ProjectStep | 'code'
@@ -1278,6 +1545,41 @@ export interface StarterFile {
   path: string
   purpose: string
   content: string
+}
+
+export interface CodeSyntaxCheck {
+  valid: boolean
+  message: string
+  line: number | null
+  column: number | null
+}
+
+export interface ProjectCodeRun {
+  id: string
+  created_at: string
+  mode: 'toy'
+  status: 'succeeded' | 'failed'
+  dataset: string
+  split: string
+  seed: number
+  file_manifest_sha256: string
+  runtime: {
+    python: string
+    image_digest: string
+    packages: string[]
+    requirements_installed: boolean
+    note: string
+  }
+  duration_ms: number
+  timed_out: boolean
+  exit_code: number
+  summary: string
+  stdout: string
+  stderr: string
+  results_csv: string
+  results_csv_truncated: boolean
+  predictions_jsonl: string
+  predictions_jsonl_truncated: boolean
 }
 
 export interface ProjectSummary {
@@ -1450,5 +1752,131 @@ export interface ActivityEvent {
   resource_type: string | null
   resource_id: string | null
   ip_address: string
+  created_at: string
+}
+
+// --- Research Watches: an autonomous agent that monitors arXiv for new papers ------------------
+
+export type WatchStatus = 'active' | 'paused'
+export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed'
+export type RunTrigger = 'scheduled' | 'manual'
+export type ImportStatus = 'pending' | 'imported' | 'already_in_library'
+
+export interface WatchRun {
+  id: string
+  watch_id: string
+  status: RunStatus
+  trigger: RunTrigger
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+  candidates_found: number
+  candidates_above_threshold: number
+  imported_count: number
+  error_message: string | null
+  report_id: string | null
+}
+
+export interface Watch {
+  id: string
+  name: string
+  query: string
+  collection_id: string | null
+  project_id: string | null
+  interval_hours: number
+  relevance_threshold: number
+  auto_import: boolean
+  synthesize: boolean
+  is_public: boolean
+  status: WatchStatus
+  last_searched_at: string | null
+  next_run_at: string
+  created_at: string
+  updated_at: string
+  latest_run: WatchRun | null
+}
+
+export interface WatchCreate {
+  name: string
+  query: string
+  collection_id?: string | null
+  project_id?: string | null
+  interval_hours?: number
+  relevance_threshold?: number
+  auto_import?: boolean
+  synthesize?: boolean
+  is_public?: boolean
+}
+
+export type WatchUpdate = Partial<WatchCreate> & { status?: WatchStatus }
+
+export interface DigestEntryTrace {
+  search_query: string
+  searched_since: string
+  anchor_topic: string
+  anchor_project_question: string | null
+  rank: number
+  candidates_in_run: number
+  relevance_threshold: number
+}
+
+export interface DigestEntry {
+  id: string
+  run_id: string
+  watch_id: string
+  arxiv_id: string
+  title: string
+  authors: { name: string; affiliation: string | null }[]
+  abstract: string
+  published: string | null
+  score: number
+  blurb: string | null
+  document_id: string | null
+  import_status: ImportStatus
+  created_at: string
+  trace: DigestEntryTrace
+}
+
+// --- Public (no login) view of a watch marked is_public ----------------------------------------
+
+export interface PublicWatch {
+  id: string
+  name: string
+  query: string
+  status: WatchStatus
+  created_at: string
+}
+
+export interface PublicDigestEntry {
+  id: string
+  arxiv_id: string
+  title: string
+  authors: { name: string; affiliation: string | null }[]
+  abstract: string
+  published: string | null
+  score: number
+  blurb: string | null
+  created_at: string
+}
+
+// --- Slack/Discord delivery (Settings -> Notifications) -----------------------------------------
+
+export type WebhookPlatform = 'slack' | 'discord'
+
+export interface Webhook {
+  platform: WebhookPlatform
+  url_hint: string
+  updated_at: string
+}
+
+// --- Notifications -------------------------------------------------------------------------------
+
+export interface Notification {
+  id: string
+  kind: string
+  title: string
+  body: string
+  link: string | null
+  read_at: string | null
   created_at: string
 }

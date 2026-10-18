@@ -7,6 +7,7 @@ import {
   Copy,
   ExternalLink,
   GitCompareArrows,
+  Lightbulb,
   Loader2,
   MessagesSquare,
   MoreHorizontal,
@@ -61,6 +62,7 @@ import { EquationsTab, FiguresTab, ReferencesTab, TablesTab } from './ElementTab
 import { PassagesTab, SimilarTab } from './IndexTabs'
 import { OverviewTab } from './OverviewTab'
 import { RelatedWork } from '@/components/knowledge/PaperKnowledge'
+import { TransformerVisualizer } from './TransformerVisualizer'
 
 const itemClass =
   'flex h-8 cursor-default items-center gap-2 rounded-sm px-2 text-small text-text outline-none select-none data-[highlighted]:bg-surface-muted'
@@ -116,6 +118,14 @@ function Header({
     },
     onError: (e) => toast.error(e.message),
   })
+  const startResearchProject = () => {
+    const query = new URLSearchParams({
+      paper_id: doc.id,
+      paper_title: doc.title,
+      idea: `Build on “${doc.title}” by exploring its central method and proposing a small, testable extension.`,
+    })
+    navigate(`/projects?${query.toString()}`)
+  }
 
   return (
     <header className="mb-6">
@@ -202,6 +212,9 @@ function Header({
               </Button>
             </span>
           </Tooltip>
+          <Button variant="primary" size="sm" onClick={startResearchProject}>
+            <Lightbulb className="size-4" aria-hidden /> Start research project
+          </Button>
           {org && <CollectionMenu documentId={doc.id} memberOf={org.collections.map((c) => c.id)} />}
           <Tooltip content={org?.bookmarked ? 'Remove bookmark' : 'Bookmark this paper'}>
             <Button
@@ -410,10 +423,13 @@ export function PaperPage() {
   const generateSummary = useGenerateSummary(id)
   const [editing, setEditing] = useState(false)
   const [target, setTarget] = useState<ReaderTarget | null>(null)
+  const [explainQuestion, setExplainQuestion] = useState<string | null>(null)
+  const [explainNonce, setExplainNonce] = useState(0)
   const tab = params.get('tab') ?? 'overview'
   const location = useLocation()
   const navigate = useNavigate()
   const showAdvanced = usePreferences((s) => s.showAdvanced)
+  const hasTransformerArchitecture = /attention is all you need|transformer/i.test(doc?.title ?? '')
 
   useEffect(() => {
     if (id) void documentsApi.markOpened(id).catch(() => {})
@@ -482,6 +498,15 @@ export function PaperPage() {
       },
       { replace: true },
     )
+  const explainPassage = (paragraph: { text: string; page_start: number }, sectionTitle: string) => {
+    const section = sectionTitle ? `Section: ${sectionTitle}. ` : ''
+    setExplainQuestion(
+      `Explain this selected passage from “${doc?.title ?? 'the paper'}” in depth. ${section}Page ${paragraph.page_start}.\n\nPassage:\n“${paragraph.text.slice(0, 3000)}”\n\nBreak it down sentence by sentence. Define technical terms and symbols in plain language, explain the intuition and how the claims connect to the paper's method, and distinguish what the passage says from any helpful analogy. Ground the explanation in this paper, cite relevant pages, and say clearly when the paper does not provide enough detail.`,
+    )
+    setExplainNonce((nonce) => nonce + 1)
+    setTab('paper')
+    setChat('new')
+  }
   const [openingChat, setOpeningChat] = useState(false)
   const toggleChat = async () => {
     if (chatOpen) return setChat(null)
@@ -489,7 +514,7 @@ export function PaperPage() {
     // panel opens: switching the conversation after it opened raced with "New chat" and
     // with questions sent meanwhile (which then went to the wrong conversation).
     setOpeningChat(true)
-    const recent = await chatApi.list({ documentId: id, limit: 1 }).catch(() => null)
+    const recent = await chatApi.list({ documentId: id, singlePaper: true, limit: 1 }).catch(() => null)
     setOpeningChat(false)
     setChat(recent?.items[0]?.id ?? 'new')
   }
@@ -541,6 +566,7 @@ export function PaperPage() {
             <TabsList className="mb-6">
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="paper">Paper</TabsTrigger>
+              {hasTransformerArchitecture && <TabsTrigger value="model-map">Model map</TabsTrigger>}
               <TabsTrigger value="figures" count={count('figure')}>
                 Figures
               </TabsTrigger>
@@ -568,6 +594,11 @@ export function PaperPage() {
             <TabsContent value="overview">
               <OverviewTab doc={doc} onOpenSource={openSource} />
             </TabsContent>
+            {hasTransformerArchitecture && (
+              <TabsContent value="model-map">
+                <TransformerVisualizer />
+              </TabsContent>
+            )}
             <TabsContent value="notes">
               <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_24rem]">
                 <section aria-labelledby="paper-notes">
@@ -614,18 +645,28 @@ export function PaperPage() {
                     target={target}
                     marks={marks}
                     passageActions={({ paragraph, sectionTitle }) => (
-                      <SaveActions
-                        documentId={doc.id}
-                        kind={paragraph.kind === 'table' ? 'table' : 'passage'}
-                        target={{
-                          page: paragraph.page_start,
-                          char_start: paragraph.char_start,
-                          char_end: paragraph.char_end,
-                          quote: paragraph.text.slice(0, 1200),
-                          boxes: paragraph.boxes,
-                          section_title: sectionTitle || undefined,
-                        }}
-                      />
+                      <>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => explainPassage(paragraph, sectionTitle)}
+                          aria-label="Explain this passage alongside the paper"
+                        >
+                          <Sparkles className="size-3.5" aria-hidden /> Explain
+                        </Button>
+                        <SaveActions
+                          documentId={doc.id}
+                          kind={paragraph.kind === 'table' ? 'table' : 'passage'}
+                          target={{
+                            page: paragraph.page_start,
+                            char_start: paragraph.char_start,
+                            char_end: paragraph.char_end,
+                            quote: paragraph.text.slice(0, 1200),
+                            boxes: paragraph.boxes,
+                            section_title: sectionTitle || undefined,
+                          }}
+                        />
+                      </>
                     )}
                   />
                 </TabsContent>
@@ -654,7 +695,12 @@ export function PaperPage() {
                 conversationId={chatParam === 'new' ? null : chatParam}
                 onConversation={(conversation) => setChat(conversation ?? 'new')}
                 onOpen={openSource}
-                onClose={() => setChat(null)}
+                onClose={() => {
+                  setChat(null)
+                  setExplainQuestion(null)
+                }}
+                initialQuestion={explainQuestion}
+                initialQuestionKey={explainNonce}
               />
             </aside>
           )}
@@ -673,7 +719,12 @@ export function PaperPage() {
             conversationId={chatParam === 'new' || chatParam === null ? null : chatParam}
             onConversation={(conversation) => setChat(conversation ?? 'new')}
             onOpen={openSource}
-            onClose={() => setChat(null)}
+            onClose={() => {
+              setChat(null)
+              setExplainQuestion(null)
+            }}
+            initialQuestion={explainQuestion}
+            initialQuestionKey={explainNonce}
           />
         </Sheet>
       )}

@@ -204,7 +204,7 @@ describe('Research chat', () => {
     })
 
     renderAt('/chat')
-    expect(screen.getByRole('heading', { name: 'Ask your research library' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Ask anything' })).toBeInTheDocument()
     await userEvent.type(screen.getByLabelText('Your question'), 'How much memory do adapters save?{Enter}')
 
     // While streaming: the question, the partial answer, a Stop button; an invented [9] is plain text.

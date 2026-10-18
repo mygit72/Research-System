@@ -14,6 +14,7 @@ set -euo pipefail
 MODEL="${1:-qwen2.5:3b}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ENV_FILE="$ROOT/backend/.env"
+CODE_MODEL=""
 
 version_of() { "$@" 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1; }
 at_least() { [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1)" = "$2" ]; }
@@ -67,6 +68,7 @@ EOF
 else
   echo "Keeping your existing $ENV_FILE"
 fi
+CODE_MODEL="$(sed -n 's/^CODE_LLM_MODEL=//p' "$ENV_FILE" | head -1 | tr -d '\r' | xargs || true)"
 
 cd "$ROOT/backend"
 if [ ! -d .venv ]; then
@@ -98,6 +100,15 @@ if [ -n "$OLLAMA" ]; then
   else
     echo "Downloading $MODEL into Ollama (once)..."
     "$OLLAMA" pull "$MODEL"
+  fi
+  if [ -n "$CODE_MODEL" ] && [ "$CODE_MODEL" != "$MODEL" ]; then
+    TAGS="$(tags)"
+    if ! printf '%s' "$TAGS" | grep -Fq "\"name\":\"$CODE_MODEL\""; then
+      echo "Downloading coding model $CODE_MODEL into Ollama (once)..."
+      "$OLLAMA" pull "$CODE_MODEL"
+    else
+      echo "Ollama has coding model $CODE_MODEL."
+    fi
   fi
 else
   echo "Ollama is not installed: answers need an API key (Settings -> AI) until you install it."

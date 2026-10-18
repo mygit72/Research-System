@@ -29,11 +29,14 @@ class OllamaProvider:
     async def stream(
         self, messages: list[Message], params: GenerationParams
     ) -> AsyncIterator[StreamEvent]:
+        options = {"temperature": params.temperature, "num_predict": params.max_tokens}
+        if params.context_window is not None:
+            options["num_ctx"] = params.context_window
         body = {
             "model": self.model_id,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
             "stream": True,
-            "options": {"temperature": params.temperature, "num_predict": params.max_tokens},
+            "options": options,
         }
         async with httpx.AsyncClient(
             base_url=self.base_url,

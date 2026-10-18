@@ -12,6 +12,7 @@ const busy = (p: Project | undefined) =>
   !!p &&
   (p.steps.questions.status === 'running' ||
     p.steps.outline.status === 'running' ||
+    p.steps.code.status === 'running' ||
     [p.reports.background, p.reports.gaps].some((r) => r && (r.status === 'queued' || r.status === 'running')))
 
 export function useProject(id: string) {

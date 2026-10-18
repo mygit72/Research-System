@@ -96,7 +96,7 @@ export function pagesLabel(item: Pick<EvidenceItem, 'page_start' | 'page_end'>) 
 
 export const STAGES: { stage: ChatStage; label: string }[] = [
   { stage: 'understanding', label: 'Understanding the question' },
-  { stage: 'searching', label: 'Searching your research library' },
+  { stage: 'searching', label: 'Checking papers for context' },
   { stage: 'reading', label: 'Reading the most relevant passages' },
   { stage: 'writing', label: 'Writing the answer' },
   { stage: 'verifying', label: 'Checking each claim against its source' },
@@ -118,6 +118,10 @@ export const CLAIM_STATUS: Record<string, { label: string; dot: string }> = {
 }
 
 export const INTENT_LABELS: Record<string, string> = {
+  equation_explanation: 'Equation or notation',
+  figure_table_question: 'Figure or table',
+  concept_explanation: 'Concept explanation',
+  experiment_question: 'Experiments and evaluation',
   factual_question: 'Factual question',
   methodology_question: 'Method question',
   comparison: 'Comparison',
@@ -140,8 +144,11 @@ export const LIBRARY_SUGGESTIONS = [
 ]
 
 export const PAPER_SUGGESTIONS = [
-  'What is the main contribution of this paper?',
-  'How does the proposed method work?',
-  'What datasets and baselines are used?',
-  'What limitations do the authors mention?',
+  'Explain the paper in plain language for a new reader.',
+  'Walk me through the proposed method step by step.',
+  'Explain one key equation and define its symbols.',
+  'What do the main figures and tables show?',
+  'Which experiments support the main claim?',
+  'What assumptions and limitations should I know about?',
+  'How could I reproduce the main result?',
 ]

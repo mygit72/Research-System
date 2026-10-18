@@ -47,6 +47,24 @@ or pull any model later (`ollama pull mistral`, `ollama pull qwen2.5:7b`, …) a
 **Settings → AI → A model on my computer → Test connection**: the list shows every model you
 have. Bigger models answer better and need more memory; 3B–8B models suit most laptops.
 
+For code requests only, you can configure a separate local coder without changing the model used
+for ordinary chat. Pull a coder model, then add its exact Ollama name to `backend/.env`:
+
+```dotenv
+CODE_LLM_MODEL=qwen2.5-coder:14b
+```
+
+The local start script downloads that model if needed. This override is used only when the chat is
+already using local Ollama; it never replaces a hosted or shared free model choice. Python code
+drafts are checked for syntax, and GPT-from-scratch drafts also get structural checks and up to two
+repair attempts. Code requests use `CODE_LLM_CONTEXT_WINDOW` (default 8192); lower it in
+`backend/.env` if a large context exceeds your GPU or system memory. The app does not execute
+generated code automatically.
+
+After the configured embedding, reranking and verifier checkpoints are cached, set
+`HF_HUB_OFFLINE=true` in `backend/.env` to use them without contacting Hugging Face. Set it back
+to `false` when you want the app to download a newly selected model.
+
 LM Studio, vLLM or a llama.cpp server work too: choose **Other OpenAI-compatible server** and
 give its address (for example `http://localhost:1234/v1`).
 

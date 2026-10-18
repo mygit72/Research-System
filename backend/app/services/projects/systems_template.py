@@ -237,6 +237,46 @@ class YourApproach(System):
         raise NotImplementedError("TODO: implement YourApproach.answer — return the answer string.")
 '''
 
+APPROACH_DRAFTED = '''
+
+class YourApproach(System):
+    """The system your hypothesis is about.
+
+    Hypothesis: {hypothesis}
+    {builds_on_line}
+
+    *** LLM-DRAFTED — UNVERIFIED. ***
+    A first attempt written by the language model configured in Settings → AI, from the passages
+    below (it saw nothing else). Unlike the report sections elsewhere in this app, a block of code
+    isn't a sentence an entailment checker can verify: nobody has run this. Read it, run it, and
+    expect to fix it before trusting any number it produces.
+
+    Drafted from: {source_list}
+    """
+
+    label = {label!r}
+
+{code}
+'''
+
+BASELINE_DRAFTED = '''
+
+class {cls}(System):
+    """Baseline: {name}. {where}
+
+    *** LLM-DRAFTED — UNVERIFIED. ***
+    A first attempt written by the language model configured in Settings → AI, from the passages
+    below. Not run, not checked. Read it, run it, and compare it against the paper's own reported
+    numbers before trusting it as a baseline.
+
+    Drafted from: {source_list}
+    """
+
+    label = {name!r}
+
+{code}
+'''
+
 BASELINE_RUNNABLE = '''
 
 class {cls}(PipelineSystem):

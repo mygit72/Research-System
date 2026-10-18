@@ -1,5 +1,14 @@
 """ORM models. Importing this package registers every table on `Base.metadata`."""
 
+from app.models.agent import (
+    AgentDigestEntry,
+    AgentRun,
+    AgentWatch,
+    ImportStatus,
+    RunStatus,
+    RunTrigger,
+    WatchStatus,
+)
 from app.models.audit import AuditLog
 from app.models.base import Base
 from app.models.chat import ChatMessage, Citation, Conversation, ConversationScope, MessageStatus
@@ -22,6 +31,7 @@ from app.models.evaluation import EvalDataset, EvalItem, EvalRun
 from app.models.job import Job, JobStatus
 from app.models.knowledge import DocumentEntity, Entity, EntityExtraction, TopicClustering
 from app.models.model_choice import UserModelChoice
+from app.models.notification import Notification
 from app.models.organization import (
     AnchorType,
     Bookmark,
@@ -39,8 +49,12 @@ from app.models.report import ReportKind, ReportStatus, ResearchReport
 from app.models.summary import PaperSummary, SummaryStatus
 from app.models.usage import LLMUsage
 from app.models.user import RefreshToken, User
+from app.models.webhook import NotificationChannel, WebhookPlatform
 
 __all__ = [
+    "AgentDigestEntry",
+    "AgentRun",
+    "AgentWatch",
     "AnchorType",
     "AuditLog",
     "Base",
@@ -71,12 +85,15 @@ __all__ = [
     "EvalDataset",
     "EvalItem",
     "EvalRun",
+    "ImportStatus",
     "IndexStatus",
     "Job",
     "JobStatus",
     "LLMUsage",
     "MessageStatus",
     "Note",
+    "Notification",
+    "NotificationChannel",
     "Page",
     "PaperExtraction",
     "PaperSummary",
@@ -86,10 +103,14 @@ __all__ = [
     "ReportStatus",
     "ResearchProject",
     "ResearchReport",
+    "RunStatus",
+    "RunTrigger",
     "Section",
     "SummaryStatus",
     "Tag",
     "TopicClustering",
     "User",
     "UserModelChoice",
+    "WatchStatus",
+    "WebhookPlatform",
 ]

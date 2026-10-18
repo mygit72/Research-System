@@ -13,6 +13,30 @@ from dataclasses import dataclass, field
 
 INTENTS: list[tuple[str, re.Pattern[str]]] = [
     (
+        "equation_explanation",
+        re.compile(
+            r"\b(equations?|formulas?|notation|symbols?|derive|derivation|mathematical|"
+            r"objective function|loss function)\b",
+            re.I,
+        ),
+    ),
+    (
+        "figure_table_question",
+        re.compile(r"\b(figures?|tables?|charts?|plots?|graphs?|diagrams?|visuali[sz]ations?)\b", re.I),
+    ),
+    (
+        "concept_explanation",
+        re.compile(
+            r"\b(explain|define|clarify|interpret|break down|walk me through|teach me|"
+            r"what does .{1,100} mean|what do .{1,100} mean|why does|why do)\b",
+            re.I,
+        ),
+    ),
+    (
+        "experiment_question",
+        re.compile(r"\b(experiments?|evaluations?|ablations?|reproduc\w*|replicat\w*)\b", re.I),
+    ),
+    (
         "comparison",
         re.compile(
             r"\b(compare|comparison|versus|vs\.?|differ(ence|ent)?|better than|worse than)\b", re.I
@@ -68,9 +92,37 @@ _ABOUT_PAPER = re.compile(
     r"\bauthors?\b|\bmain (idea|contribution|finding|result)s?\b",
     re.I,
 )
-_PAPER_INTENTS = {"summarization", "methodology_question", "research_gap", "dataset_search"}
+_PAPER_INTENTS = {
+    "summarization",
+    "methodology_question",
+    "research_gap",
+    "dataset_search",
+    "equation_explanation",
+    "figure_table_question",
+    "concept_explanation",
+    "experiment_question",
+}
 _ACRONYM = re.compile(r"\b[A-Z][A-Za-z]*[A-Z][A-Za-z0-9-]*\b|\b[A-Z]{2,}[0-9-]*\w*\b")
 _QUOTED = re.compile(r"[\"“]([^\"”]{3,80})[\"”]")
+_PAPER_DETAIL = re.compile(
+    r"\b(equations?|formulas?|figures?|tables?|charts?|plots?|graphs?|diagrams?|"
+    r"architecture|models?|methods?|approaches?|algorithms?|experiments?|results?|"
+    r"baselines?|datasets?|benchmarks?|metrics?|loss|objectives?|ablations?|limitations?|"
+    r"assumptions?|contributions?|findings?|hyperparameters?|implementation|reproduc\w*|"
+    r"attention|encoder|decoder|embedding|token|layer|gradient|parameter|training|evaluation|"
+    r"accuracy|precision|recall|f1|score|performance|"
+    r"notation|symbols?|terms?|concepts?|techniques?)\b",
+    re.I,
+)
+_EXPLANATION_CUE = re.compile(
+    r"\b(explain|define|clarify|interpret|break down|walk me through|teach me|"
+    r"what does|what do|what is|what are|why|how|meaning of)\b",
+    re.I,
+)
+_SHORT_DEFINITION = re.compile(
+    r"^what (?:is|are) (?:(?:a|an|the) )?[\w+-]+(?:[ -][\w+-]+){0,2}[?.!]*$",
+    re.I,
+)
 
 
 @dataclass
@@ -129,6 +181,8 @@ def analyze_query(question: str, previous_question: str | None = None) -> QueryA
         if match:
             intent, cue = name, match.group(0)
             break
+    if intent == "factual_question" and _SHORT_DEFINITION.search(question):
+        intent, cue = "concept_explanation", _SHORT_DEFINITION.search(question).group(0)
 
     entities = list(
         dict.fromkeys(
@@ -163,6 +217,12 @@ def analyze_query(question: str, previous_question: str | None = None) -> QueryA
         year_to=year_to,
         temporal_phrase=phrase,
         follow_up=follow_up,
-        about_the_paper=bool(_ABOUT_PAPER.search(question)) or intent in _PAPER_INTENTS,
+        about_the_paper=(
+            bool(_ABOUT_PAPER.search(question))
+            or intent in _PAPER_INTENTS
+            or bool(_PAPER_DETAIL.search(question) and _EXPLANATION_CUE.search(question))
+            or bool(entities and _EXPLANATION_CUE.search(question))
+            or bool(_SHORT_DEFINITION.search(question))
+        ),
         notes=notes,
     )

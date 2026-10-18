@@ -88,6 +88,11 @@ class Settings(BaseSettings):
     # --- Jobs ----------------------------------------------------------------
     job_backend: JobBackend = JobBackend.INLINE
 
+    # The code runner is a separate internal service. It launches disposable containers; the
+    # API never executes a project's Python files in its own process.
+    project_runner_url: str | None = None
+    project_runner_token: SecretStr | None = None
+
     # --- Uploads -----------------------------------------------------------------
     max_upload_size_mb: int = 50
     max_zip_size_mb: int = 200  # a folder of papers as one .zip
@@ -96,10 +101,12 @@ class Settings(BaseSettings):
     llm_provider: str = "ollama"  # ollama | openai (any compatible API) | fake (tests)
     llm_model: str = ""  # empty = provider default (ollama: qwen2.5:3b)
     ollama_base_url: str = "http://localhost:11434"
+    code_llm_model: str = ""  # optional local Ollama model for software/code requests
     openai_api_key: SecretStr | None = None
     llm_api_base: str = "https://api.openai.com/v1"
     llm_timeout: float = 300.0
     llm_max_tokens: int = 700  # answer length cap
+    code_llm_context_window: int = 8192  # larger Ollama context for complete code drafts
     llm_temperature: float = 0.1
     # Cost accounting (USD per million tokens). Local models cost nothing per token; set these
     # for a hosted provider to see cost in the evaluation dashboard.
@@ -166,6 +173,24 @@ class Settings(BaseSettings):
     answer_cache_min_similarity: float = 0.95
     answer_cache_days: int = 30
     local_only: bool = False  # when true, remote AI providers are refused
+    hf_hub_offline: bool = False  # use only already-cached Hugging Face models
+    # --- Research watches: autonomous arXiv monitoring ---
+    agent_scheduler_enabled: bool = True
+    agent_scheduler_poll_seconds: int = 300
+    agent_watch_min_interval_hours: int = 6
+    agent_watch_default_interval_hours: int = 24
+    agent_watch_lookback_days: int = 14
+    agent_watch_max_results_per_run: int = 10
+    agent_watch_default_relevance_threshold: float = 0.35
+    agent_watch_max_active_per_user: int = 10
+    # A watch's run writes a full literature review once it keeps at least this many
+    # candidates (opt-in per watch via `synthesize`); capped at this many papers even if more
+    # were kept, to bound one scheduled tick's latency and cost.
+    agent_watch_synthesis_min_papers: int = 3
+    agent_watch_synthesis_max_papers: int = 8
+    # Used to build an absolute link in Slack/Discord messages; empty = omit the link rather
+    # than send a broken one.
+    app_base_url: str = ""
     # --- Each user's own model (Settings -> AI) ---
     # Users may bring their own API key for a hosted provider (OpenAI, Gemini, Groq, OpenRouter,
     # Mistral). Their AI work then runs on, and is billed to, their key.
@@ -228,6 +253,20 @@ class Settings(BaseSettings):
             raise RuntimeError("JWT_SECRET must be set to a strong random value in production")
         if len(self.jwt_secret.get_secret_value()) < 32:
             raise RuntimeError("JWT_SECRET must be at least 32 characters")
+        if self.project_runner_url:
+            runner_token = (
+                self.project_runner_token.get_secret_value()
+                if self.project_runner_token
+                else ""
+            )
+            if (
+                len(runner_token) < 32
+                or runner_token == "local-development-runner-token-change-me"
+            ):
+                raise RuntimeError(
+                    "Set PROJECT_RUNNER_TOKEN to a long random value before enabling the "
+                    "project runner in production"
+                )
 
 
 @lru_cache

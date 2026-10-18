@@ -11,6 +11,7 @@ import { useUploads } from '@/stores/uploads'
 import { useUI } from '@/stores/ui'
 import { CommandPalette } from './CommandPalette'
 import { MobileNav } from './MobileNav'
+import { NotificationBell } from './NotificationBell'
 import { Onboarding } from './Onboarding'
 import { Sidebar } from './Sidebar'
 import { UserMenu } from './UserMenu'
@@ -62,7 +63,8 @@ export function AppShell() {
               <Kbd>K</Kbd>
             </span>
           </button>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            <NotificationBell />
             <UserMenu />
           </div>
         </header>

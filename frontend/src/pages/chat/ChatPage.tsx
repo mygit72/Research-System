@@ -201,7 +201,7 @@ export function ChatPage() {
             <span className="ml-2 font-normal text-muted">
               {conversation?.scope === 'papers'
                 ? `· ${conversation.document_ids.length} paper${conversation.document_ids.length === 1 ? '' : 's'}`
-                : '· Searching your research library'}
+                : '· Checks papers when relevant'}
             </span>
           </h1>
           {conversation?.scope === 'papers' && conversation.document_ids.length === 1 && (
@@ -222,9 +222,9 @@ export function ChatPage() {
               navigate(`/chat/${created}`, { replace: true })
             }}
             emptyState={{
-              title: 'Ask your research library',
+              title: 'Ask anything',
               description:
-                'Answers are written only from passages in your papers, with a numbered citation for every claim. Click a citation to see the source.',
+                'Get help on any topic. When your question relates to your papers, paper-specific claims cite their passages and general background is labeled separately.',
             }}
             suggestions={LIBRARY_SUGGESTIONS}
           />

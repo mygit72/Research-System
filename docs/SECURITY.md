@@ -131,6 +131,78 @@ it is tested. Reviewed in Phase 15 (2026-10-02).
   busy for tens of seconds on a CPU; more get 429 with a hint.
 - Jobs interrupted by a crash resume on startup, but a job interrupted 3 times is failed, so a
   file that crashes the process can't put it in a restart loop.
+- Research Watches: at most `AGENT_WATCH_MAX_ACTIVE_PER_USER` (10) active watches per user, at
+  most `AGENT_WATCH_MAX_RESULTS_PER_RUN` (10) digest entries (and auto-imports) per run, and a
+  floor of `AGENT_WATCH_MIN_INTERVAL_HOURS` (6) between scheduled runs.
+
+### Autonomous research watches
+
+- arXiv search reuses the import feature's existing fixed-host allowlist (`export.arxiv.org`) —
+  no new outbound host, and the same redirect/host checks (`services/safe_fetch.py`) apply.
+- Refused entirely under `LOCAL_ONLY`, exactly like manual arXiv import. A refused or unreachable
+  run is recorded as a clean skip (not a failure) and the schedule still advances, so a persistent
+  `LOCAL_ONLY` deployment or a network outage doesn't retry-storm arXiv every poll.
+- The best-effort "why relevant" LLM blurb is skipped entirely on the free tier (`FREE_TIER`): a
+  background agent never spends a shared/free budget, or sends a user's abstract text to a model,
+  without an explicit click — the same reasoning that already keeps auto-summarization off the
+  free tier.
+- Importing a watch's match (auto-import or the manual "Add to library") goes through the same
+  `DocumentService.import_arxiv` path as a user-initiated import: the same size limits, dedup and
+  per-user isolation apply.
+- **Synthesis** (`synthesize`, opt-in per watch): writing a literature review requires reading the
+  matched papers, so it imports them even when `auto_import` is off — a separate opt-in, not
+  implied by anything else, so a user who turned auto-import off deliberately isn't surprised by
+  imports anyway. Capped at `AGENT_WATCH_SYNTHESIS_MAX_PAPERS` (8) papers per run. It waits for the
+  papers to finish processing (bounded, 5 minutes) before requesting the review through the exact
+  same `request_report` path a user-initiated review uses; if no model is configured, synthesis is
+  skipped quietly (not a run failure). The run's own status stays `running` for this entire wait —
+  it only reports `succeeded` once synthesis has actually finished too, so a client can't mistake
+  "the digest is ready" for "everything this run does is done."
+- **Public watches** (`is_public`, opt-in per watch, off by default): the public endpoints
+  (`/public/watches/...`) take no `CurrentUser` — they are the one deliberately unauthenticated
+  surface in this API, gated only by `is_public` plus the watch's own unguessable UUID (the same
+  trust model as a signed asset URL). They return a response shaped by its own minimal schema
+  (`PublicWatchOut`/`PublicDigestEntryOut`), not the authenticated ones, so a private field added
+  to the authenticated schema later can't leak here by accident. Exposed fields are only what's
+  already public on arXiv (title, authors, abstract, arXiv id, published date, score, the LLM
+  blurb) — never the owner's identity, `document_id` (their private library), `import_status`, or
+  anything about their other watches. Covered by `test_public_watches_api.py`, not the cross-tenant
+  matrix (there is no "my resource vs. another user's" check to make on a route with no user).
+
+### Webhook delivery (Slack/Discord)
+
+- A saved webhook URL is validated against a fixed host allowlist (`hooks.slack.com`,
+  `discord.com`, `discordapp.com`) **before** it is ever stored or posted to
+  (`services/webhooks.py`) — the same "fixed hosts only" posture as the arXiv/Crossref importers.
+  This is not a general outbound-fetch feature: a user cannot make the server POST to an arbitrary
+  URL, only to one of two known webhook providers.
+- One webhook per platform per account (`notification_channels`, unique on `(user_id, platform)`),
+  reused by every watch — not a destination chosen per watch or per run.
+- The saved URL is never echoed back in full (`url_hint`: last 6 characters only), the same
+  write-only pattern as a saved model API key.
+- `/users/me/webhooks/{platform}/test` is rate-limited like the model connection test
+  (`auth_rate_limit_per_minute`).
+- Sending is best-effort and kept outside the run's database transaction: a slow or failing POST
+  to Slack/Discord can never affect the watch run's own commit.
+
+### Research project code runner
+
+- The API sends only the project's fixed starter-file set to the internal `project-runner` service.
+  It does not execute submitted code in the API or Celery worker process.
+- The manager launches a fresh container per run with no network, no host mounts, a read-only root,
+  a non-root UID, all Linux capabilities dropped, `no-new-privileges`, 1 GiB memory, one CPU, 64
+  processes, a 40-second wall-clock limit, and bounded temporary storage and output. Containers are
+  removed after the run. The runner image's pinned contents are recorded by image digest.
+- The in-app run uses the fixed four-example toy dataset and one seed. It does not install
+  `requirements.txt`, download datasets, reach Ollama or a hosted model, or claim a reproduction.
+  Each run records the Python version, installed package versions and runner image digest. Add
+  reviewed packages to the runner image when a project needs them.
+- `project-runner` needs a Docker Engine socket to create the disposable containers. Access to that
+  socket is effectively host-administrator access. The Compose service is internal and token-gated,
+  but a compromise of the manager or its Docker client could control that daemon. For a public or
+  multi-user deployment, run the manager against a dedicated rootless Docker Engine on a separate
+  VM/host; do not mount a general-purpose production daemon socket. Replace the development token
+  with a long random `PROJECT_RUNNER_TOKEN`.
 
 ### Privacy
 

@@ -14,19 +14,24 @@ from app.api.routes import (
     jobs,
     knowledge,
     model_choice,
+    notifications,
     organization,
     projects,
+    public,
     reports,
     search,
     summaries,
     usage,
     users,
+    watches,
+    webhooks,
 )
 
 api_router = APIRouter(dependencies=[Depends(rate_limit("api"))])
 api_router.include_router(auth.router)
 api_router.include_router(users.router)
 api_router.include_router(model_choice.router)
+api_router.include_router(webhooks.router)
 api_router.include_router(jobs.router)
 api_router.include_router(documents.router)
 api_router.include_router(search.router)
@@ -37,6 +42,9 @@ api_router.include_router(organization.router)
 api_router.include_router(knowledge.router)
 api_router.include_router(reports.router)
 api_router.include_router(projects.router)
+api_router.include_router(watches.router)
+api_router.include_router(public.router)
+api_router.include_router(notifications.router)
 api_router.include_router(evaluation.router)
 api_router.include_router(usage.router)
 api_router.include_router(demo.router)

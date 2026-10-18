@@ -54,6 +54,57 @@ def write_project(files: list[dict[str, str]], target: Path) -> None:
         (target / file["path"]).write_text(file["content"], encoding="utf-8")
 
 
+async def test_model_code_can_be_saved_in_the_project_workspace(auth_client: AsyncClient) -> None:
+    pid = await make_project(auth_client, ["toy"])
+    content = "class ResearchModel:\n    def forward(self, values):\n        return values\n"
+    saved = await auth_client.put(
+        f"{API}/projects/{pid}/code-file", json={"path": "model.py", "content": content}
+    )
+    assert saved.status_code == 200, saved.text
+    files = (await auth_client.get(f"{API}/projects/{pid}/code")).json()["files"]
+    assert next(file["content"] for file in files if file["path"] == "model.py") == content
+
+    unknown = await auth_client.put(
+        f"{API}/projects/{pid}/code-file", json={"path": "../../server.py", "content": "bad"}
+    )
+    assert unknown.status_code == 422
+
+
+async def test_python_syntax_check_reports_errors_without_executing_code(
+    auth_client: AsyncClient,
+) -> None:
+    pid = await make_project(auth_client, ["toy"])
+    valid = await auth_client.post(
+        f"{API}/projects/{pid}/code-file/check",
+        json={
+            "path": "model.py",
+            "content": "class ResearchModel:\n    def forward(self, values):\n        return values\n",
+        },
+    )
+    assert valid.status_code == 200, valid.text
+    assert valid.json() == {
+        "valid": True,
+        "message": "Valid Python syntax. The code was checked but not executed.",
+        "line": None,
+        "column": None,
+    }
+
+    invalid = await auth_client.post(
+        f"{API}/projects/{pid}/code-file/check",
+        json={"path": "model.py", "content": "class ResearchModel:\n    def forward(self):\n        return (\n"},
+    )
+    assert invalid.status_code == 200, invalid.text
+    assert invalid.json()["valid"] is False
+    assert invalid.json()["line"] == 3
+    assert invalid.json()["message"]
+
+    non_python = await auth_client.post(
+        f"{API}/projects/{pid}/code-file/check",
+        json={"path": "config.json", "content": "{}"},
+    )
+    assert non_python.status_code == 422
+
+
 def run(cwd: Path, *args: str, env_path: Path | None = None) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "PYTHONPATH": str(env_path)} if env_path else None
     return subprocess.run(
@@ -89,6 +140,19 @@ async def test_the_generated_project_runs_and_never_invents_a_number(
     smoke = run(tmp_path, "run_experiments.py", "--smoke")
     assert smoke.returncode == 0, smoke.stderr
     assert "Lexical overlap (sanity check)" in smoke.stdout and "recall@1" in smoke.stdout
+    toy = run(tmp_path, "run_experiments.py", "--toy")
+    assert toy.returncode == 0, toy.stderr
+    toy_rows = list(
+        csv.DictReader((tmp_path / "results" / "results.csv").open(encoding="utf-8"))
+    )
+    assert {row["dataset"] for row in toy_rows} == {"toy"}
+    assert {row["seed"] for row in toy_rows if row["seed"] != "-"} == {"0"}
+    assert {row["system"] for row in toy_rows} >= {
+        "Your approach",
+        "ColBERT",
+        "Full fine-tuning",
+        "Lexical overlap (sanity check)",
+    }
     tests = run(tmp_path, "-m", "pytest", "-q", "-p", "no:cacheprovider")
     assert tests.returncode == 0, tests.stdout + tests.stderr
 

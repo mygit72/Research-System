@@ -53,6 +53,7 @@ async def app(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> AsyncItera
     monkeypatch.setattr("app.workers.reports.get_settings", lambda: settings)
     monkeypatch.setattr("app.workers.projects.get_settings", lambda: settings)
     monkeypatch.setattr("app.workers.evaluation.get_settings", lambda: settings)
+    monkeypatch.setattr("app.workers.agent_watch.get_settings", lambda: settings)
     init_engine(settings)
     async with get_engine().begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

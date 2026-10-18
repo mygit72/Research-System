@@ -1,13 +1,17 @@
 """A starter code project generated from the user's plan.
 
-Nothing here is written by a language model. The files that don't depend on the plan
-(`metrics.py`, `data.py`, `run_experiments.py`) are real, tested modules in `starter/`; the
-plan-specific ones (`config.json`, `systems.py`, `README.md`) are filled in from what the user
-chose: datasets, baselines, methods, metrics, the experiments and the hypothesis.
+Nothing here is written by a language model unless the user asks for it (see draft_code.py). The
+files that don't depend on the plan (`metrics.py`, `data.py`, `run_experiments.py`) are real,
+tested modules in `starter/`; the plan-specific ones (`config.json`, `systems.py`, `README.md`)
+are filled in from what the user chose: datasets, baselines, methods, metrics, the experiments
+and the hypothesis.
 
 What is *not* known stays a visible TODO: the user's own approach and the baselines are stubs
 that raise `NotImplementedError` with instructions, so a run can never report a number for a
-system nobody implemented.
+system nobody implemented — unless the user asked their language model to draft one
+(`project.steps["code"]["drafts"]`, written by `draft_code.py`), in which case the stub is
+replaced by the draft, always labelled "LLM-drafted — unverified" in the docstring, the README
+and the files list.
 """
 
 from __future__ import annotations
@@ -48,14 +52,27 @@ PURPOSE = {
     "README.md": "The walkthrough: what to run, in which order, what you should see, and how to judge it.",
     "config.json": "Your plan as data: datasets, systems, metrics and the experiments to run.",
     "systems.py": "The systems being compared. Your approach and the baselines are TODO stubs for you to implement.",
+    "model.py": "Your model or method, with paper-grounded teaching comments. This is a learning draft, not an evaluated system.",
     "components.py": "Finished building blocks: BM25, DPR, Contriever, a sentence-transformer, RRF fusion, a cross-encoder reranker.",
     "generation.py": "Answers written by a language model (Ollama or an OpenAI-compatible API) from the retrieved passages; cached and logged.",
     "metrics.py": "Metrics (accuracy, exact match, F1, contains, groundedness, recall@k, precision@k, MRR, nDCG), implemented and tested.",
     "data.py": "Dataset loading: a built-in toy set for the smoke test, SQuAD, and pointers for the rest.",
-    "run_experiments.py": "Runs every planned experiment and writes results/results.csv and summary.md.",
+    "run_experiments.py": (
+        "Runs planned experiments or your main systems on the built-in toy dataset (--toy); "
+        "writes aggregate results and prediction JSONL for the Failure Explorer."
+    ),
     "test_pipeline.py": "Tests that the metrics are right and the smoke run works. Run: python -m pytest",
     "requirements.txt": "Python packages (only needed for real datasets and your own systems).",
 }
+
+MODEL_STUB = '''"""Your model or method goes here.
+
+Use the paper's cited passages as a starting point. Implement the core idea, document tensor
+shapes and assumptions, and add a small example before connecting this module to experiments.
+"""
+
+# TODO: add a model/method that answers your project's research question.
+'''
 
 
 def _slug(name: str) -> str:
@@ -172,13 +189,25 @@ def build_config(project: ResearchProject, settings: Settings | None = None) -> 
     return config
 
 
+def _source_list(sources: list[dict[str, Any]]) -> str:
+    return (
+        "; ".join(
+            f"{s['document']['title']} p.{s.get('page_start')}" if s.get("page_start") else s["document"]["title"]
+            for s in sources
+        )
+        or "(no sources recorded)"
+    )
+
+
 def build_systems(project: ResearchProject) -> str:
     chosen = _steps(project)["methods"]["chosen"]
+    drafts = _steps(project).get("code", {}).get("drafts") or {}
     builds_on = chosen.get("methods") or []
     hypothesis = _one_line(project.hypothesis.strip() or "(write your hypothesis in the project)")
     plan = starter_components.resolve(builds_on)
     registry = [f"    {APPROACH!r}: YourApproach,"]
     parts = [tpl.SYSTEMS_HEAD]
+    approach_draft = drafts.get("approach")
     if _runs(plan):
         parts.append(
             tpl.APPROACH_RUNNABLE.format(
@@ -197,6 +226,20 @@ def build_systems(project: ResearchProject) -> str:
                 generate=plan.generate,
                 gate=plan.gate,
                 unmapped=plan.unmapped,
+            )
+        )
+    elif approach_draft and approach_draft.get("status") == "drafted":
+        parts.append(
+            tpl.APPROACH_DRAFTED.format(
+                hypothesis=hypothesis,
+                builds_on_line=(
+                    f"Builds on: {_one_line(', '.join(builds_on))}."
+                    if builds_on
+                    else "You haven't chosen what it builds on."
+                ),
+                source_list=_one_line(_source_list(approach_draft.get("sources") or [])),
+                label=APPROACH,
+                code=approach_draft["code"],
             )
         )
     else:
@@ -225,6 +268,7 @@ def build_systems(project: ResearchProject) -> str:
             else "None of your papers is recorded as using it."
         )
         base = starter_components.resolve([name])
+        draft = drafts.get(name)
         if _runs(base):
             parts.append(
                 tpl.BASELINE_RUNNABLE.format(
@@ -236,6 +280,16 @@ def build_systems(project: ResearchProject) -> str:
                     rerank=base.rerank,
                     generate=base.generate,
                     gate=base.gate,
+                )
+            )
+        elif draft and draft.get("status") == "drafted":
+            parts.append(
+                tpl.BASELINE_DRAFTED.format(
+                    cls=cls,
+                    name=_one_line(name),
+                    where=_one_line(where),
+                    source_list=_one_line(_source_list(draft.get("sources") or [])),
+                    code=draft["code"],
                 )
             )
         else:
@@ -285,7 +339,9 @@ def _dataset_status(names: list[str]) -> list[str]:
     return lines
 
 
-def _systems_section(config: dict[str, Any]) -> list[str]:
+def _systems_section(project: ResearchProject, config: dict[str, Any]) -> list[str]:
+    drafts = _steps(project).get("code", {}).get("drafts") or {}
+    approach_draft = drafts.get("approach")
     plan = starter_components.resolve(config["builds_on"])
     lines = [
         "Open `systems.py`. Three kinds of system are in it:",
@@ -303,11 +359,13 @@ def _systems_section(config: dict[str, Any]) -> list[str]:
     ]
     for baseline in config["baselines"]:
         base = starter_components.resolve([baseline])
-        status = (
-            f"runs now — {_describe(base)}"
-            if _runs(base)
-            else "TODO stub — no component implements it; implement it as its paper describes, or use its released code"
-        )
+        draft = drafts.get(baseline)
+        if _runs(base):
+            status = f"runs now — {_describe(base)}"
+        elif draft and draft.get("status") == "drafted":
+            status = "LLM-drafted — unverified; read it before trusting it as a baseline"
+        else:
+            status = "TODO stub — no component implements it; implement it as its paper describes, or use its released code"
         lines.append(f"- `{_slug(baseline)}` ({baseline}): {status}")
     if not config["baselines"]:
         lines.append("- You haven't chosen a baseline yet (step *Methods*).")
@@ -340,12 +398,20 @@ def _systems_section(config: dict[str, Any]) -> list[str]:
                 + ". They are not",
                 "in the starter pipeline — they are part of what you still have to build.",
             ]
+    elif approach_draft and approach_draft.get("status") == "drafted":
+        lines += [
+            "`YourApproach` is **LLM-drafted — unverified**: a first attempt written by your configured",
+            "language model from passages about it in your papers. Nobody has run it or checked it line",
+            "by line. Read it, run it, and expect to fix it before trusting any number it produces. Ask",
+            "for another draft from the *Starter code* step if it looks wrong.",
+        ]
     else:
         lines += [
             "`YourApproach` is a TODO stub: none of what you chose to build on ("
             + (", ".join(config["builds_on"]) or "nothing chosen")
             + ") has a finished component, so there is no starter pipeline. Implement `rank()` and/or",
             "`answer()`; `components.py` has a BM25 scorer, fusion and a reranker you can call from it.",
+            "Or ask your language model to draft a first attempt from the *Starter code* step.",
         ]
     lines += [""]
     if _generates(config):
@@ -471,8 +537,10 @@ def build_readme(project: ResearchProject, config: dict[str, Any]) -> str:
         f"# {config['project']} — starter code",
         "",
         "Generated from your project plan. It is a *scaffold*: the evaluation machinery is finished and",
-        "tested; your approach and the baselines are for you to implement. It never reports a number",
-        "for something that isn't implemented.",
+        "tested; your approach and the baselines are for you to implement, or for your language model to",
+        "draft a first attempt at (step *Starter code* → \"Draft the TODOs\") — those drafts are never",
+        "run or checked the way the rest of this app checks its answers, and say so wherever they appear.",
+        "It never reports a number for something that isn't implemented.",
         "",
         f"**Hypothesis:** {config['hypothesis'] or '_not written yet_'}",
         "",
@@ -523,7 +591,7 @@ def build_readme(project: ResearchProject, config: dict[str, Any]) -> str:
         "",
         "### 5. Your systems: what already runs, and what is yours to write",
         "",
-        *_systems_section(config),
+        *_systems_section(project, config),
         *(
             ["Papers in your project that use these: " + "; ".join(sorted(papers)) + ".", ""]
             if papers
@@ -537,6 +605,12 @@ def build_readme(project: ResearchProject, config: dict[str, Any]) -> str:
         "and `evidence()` — a system needs the ones its metrics use.",
         "",
         "### 7. Run the main experiments",
+        "",
+        "The app's **Run toy experiment** button runs the configured systems on four built-in examples",
+        "with one seed. It is a quick code check, not a paper reproduction. It does not install this",
+        "project's requirements or download datasets; the server runner uses only packages in its",
+        "prebuilt image (Python, NumPy and CPU PyTorch). Locally, `python run_experiments.py --toy`",
+        "selects the same toy dataset.",
         "",
         *_download_note(config),
         *(
@@ -571,8 +645,9 @@ def build_readme(project: ResearchProject, config: dict[str, Any]) -> str:
         *[f"- **{e['title']}** — {e['how']}" for e in config["experiments"] if e["kind"] != "main"],
         "",
         "Ablation: switch off one component of your approach at a time (add a variant class per",
-        "component) and rerun the main comparison. Error analysis: `results/predictions_*.jsonl` has",
-        "every prediction — open the examples your approach gets wrong and group them.",
+        "component) and rerun the main comparison. Error analysis: import",
+        "`results/predictions_*.jsonl` into the project's Failure Explorer to compare each answer",
+        "with its reference, per-example scores, and the passages retrieved or used.",
         "",
         "### 10. Bring it back into the paper",
         "",
@@ -593,7 +668,7 @@ def build_readme(project: ResearchProject, config: dict[str, Any]) -> str:
 
 
 def _requirements() -> str:
-    return "datasets>=2.18\nsentence-transformers>=3\npytest>=8\n"
+    return "datasets>=2.18\nsentence-transformers>=3\ntorch>=2.2\npytest>=8\n"
 
 
 def starter_files(
@@ -605,10 +680,27 @@ def starter_files(
         "README.md": build_readme(project, config),
         "config.json": json.dumps(config, indent=2, ensure_ascii=False) + "\n",
         "systems.py": build_systems(project),
+        "model.py": MODEL_STUB,
         "requirements.txt": _requirements(),
     }
+    model_draft = _steps(project).get("code", {}).get("drafts", {}).get("model") or {}
+    if model_draft.get("status") == "drafted":
+        sources = _source_list(model_draft.get("sources") or [])
+        content["model.py"] = (
+            '"""LLM-DRAFTED — UNVERIFIED. Generated from cited paper passages for this project. '
+            'Read and run it in your own environment before trusting it.\n\n'
+            f"Sources: {sources}\n\n"
+            'This model file is an educational starting point; the experiment runner does not call it yet.\n'
+            '"""\n\n'
+            + model_draft["code"].rstrip()
+            + "\n"
+        )
     for name in (*STATIC, "test_pipeline.py"):
         content[name] = (STARTER / name).read_text(encoding="utf-8")
+    overrides = _steps(project).get("code", {}).get("files") or {}
+    for name, edited in overrides.items():
+        if name in content and isinstance(edited, str):
+            content[name] = edited
     return [{"path": name, "purpose": PURPOSE[name], "content": content[name]} for name in PURPOSE]
 
 

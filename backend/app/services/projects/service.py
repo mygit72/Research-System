@@ -42,7 +42,7 @@ from app.services.knowledge.library import load_library
 from app.services.summaries.service import ensure_llm_ready
 
 PROJECT_JOB = "project.suggest"
-LLM_STEPS = ("questions", "outline")
+LLM_STEPS = ("questions", "outline", "code")
 MAX_SUGGESTIONS = 12
 DEFAULT_MILESTONES = [
     "Finish the literature review",
@@ -65,6 +65,7 @@ def empty_steps() -> dict[str, Any]:
         },
         "experiments": {"items": [], "milestones": [], "deadline": None},
         "outline": {"status": "idle", "sections": [], "sources": [], "error": None},
+        "code": {"status": "idle", "drafts": {}, "note": None, "error": None},
     }
 
 

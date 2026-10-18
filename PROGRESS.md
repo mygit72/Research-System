@@ -7,7 +7,10 @@
 
 **All 16 phases: ✅ complete.** Possible next steps are listed at the end of the Session 9 / Phase 16 entry.
 
-Overall: **16 / 16 phases done (100%)** · Backend tests: 562 (553 by default + 9 opt-in: real-model tests with `RUN_MODEL_TESTS=1`, PostgreSQL in CI) · Frontend tests: 136 + 7 browser (end-to-end, accessibility, project guide, DOI, zip import, model choice, free shared model)
+Overall: **16 / 16 phases done (100%), plus post-launch additions (see docs/ROADMAP.md)** ·
+Backend tests: 657 (648 by default + 9 opt-in: real-model tests with `RUN_MODEL_TESTS=1`,
+PostgreSQL in CI) · Frontend tests: 170 + 7 browser (end-to-end, accessibility, project guide,
+DOI, zip import, model choice, free shared model)
 
 | # | Phase | Status |
 |---|---|---|
@@ -44,6 +47,167 @@ cd backend && .venv/Scripts/python -m app.cli reindex --all
 ---
 
 ## Session log
+
+### Session 14: 2026-10-17 — four additions to Research Watches
+
+User request, continuing Session 13's goal: "what more can we add?" → an explainable trace,
+Slack/Discord delivery, auto-synthesis (a full literature review once enough papers match), and
+an opt-in public (no-login) activity page.
+
+#### Delivered
+- **Explainable trace**: each digest entry now carries a `trace` (search query, the topic/project
+  anchor text used, its rank among that run's candidates, score vs. threshold) — built from data
+  the run already had, not a new computation. A "Why this matched" panel on the watch page shows
+  it.
+- **Slack/Discord delivery**: Settings → Notifications — one webhook per platform per account,
+  reused by every watch. Saved URLs are validated against a fixed host allowlist
+  (`hooks.slack.com`, `discord.com`/`discordapp.com`) before being stored or posted to — the same
+  "fixed hosts only" posture as the arXiv/Crossref importers, so this is not a general
+  outbound-fetch feature. Never echoed back in full (`url_hint`, last 6 characters). Sending is
+  best-effort and happens after the run's own DB commit, so a slow/failing POST can't affect it.
+- **Auto-synthesis** (`synthesize`, opt-in per watch, separate from `auto_import`): once a run
+  keeps `agent_watch_synthesis_min_papers` (3) or more candidates, it imports up to
+  `agent_watch_synthesis_max_papers` (8) of them — even if `auto_import` is off, since writing a
+  review needs to read them — waits (bounded, 5 minutes) for them to finish processing, then calls
+  the *same* `request_report` function `POST /literature-review` uses. The review runs as its own
+  `report.generate` job and is read on the existing `/reviews/{id}` page; nothing new was built for
+  that part. If no model is configured, synthesis is skipped quietly, not a run failure.
+- **Public activity feed** (`is_public`, opt-in per watch, off by default): `/public/watches/...`
+  — the first deliberately unauthenticated routes in this app (no `CurrentUser` on any of them).
+  Gated by `is_public` plus the watch's own unguessable UUID (the same trust model as a signed
+  asset URL). Served through its own minimal schemas, never the authenticated ones, so a private
+  field added later can't leak here by accident: title, authors, abstract, arXiv id, published
+  date, score, the LLM blurb — nothing about the owner, their library, or their other watches. A
+  standalone frontend page (`/w/:id`, no `AppShell`) renders it; a "Copy link" box appears on the
+  watch's own page when public.
+
+#### A real correctness bug found and fixed while verifying this against the live dev server
+Running a real `synthesize=true` watch showed the run reporting `"succeeded"` within ~16 seconds
+— while 5 of its 8 imported papers were still `queued`/`processing` minutes later. `run.status`
+and `run.finished_at` were being set to `SUCCEEDED` inside the main write-phase session, **before**
+the synthesis step (wait-for-processing + review request) that runs after it — so a client
+polling the run saw "done" while real background work was still in flight. Fixed by moving the
+status/`finished_at` write to the true end of `execute_run`, after synthesis (success or skip).
+Re-verified live: `imported_count` reached 8 within ~10 seconds, but `status` correctly stayed
+`"running"` for the full ~55 seconds of real processing + the synthesis skip-check, only flipping
+to `"succeeded"` at the true end.
+
+#### Verified
+- Backed by new tests: `test_webhooks_unit.py` (host allowlist, `url_hint`), `test_webhooks_api.py`
+  (save/list/delete, `/test` against a mocked transport, rate limiting), `test_public_watches_api.py`
+  (404 before `is_public`, safe fields only after, no cross-tenant-matrix applicability since there's
+  no authenticated user to compare against), and new cases in `test_agent_watches_api.py` (trace
+  fields present and sensible; `synthesize=true` with `auto_import=false` still imports and links a
+  real `ResearchReport`; synthesis skips quietly with no model configured; webhook text posted on a
+  kept run). `test_tenant_isolation.py` extended (`SKIP_PREFIXES` for `/public/`, `platform: "slack"`
+  literal).
+- **Real end-to-end walkthrough against the live dev server** (real arXiv, real BGE embeddings,
+  this account's actual free-tier NVIDIA config): a `synthesize=true` run on "retrieval augmented
+  generation" found 30 real papers, kept 10, imported 8 despite `auto_import=false`, and correctly
+  waited for all 8 to really finish parsing/chunking/embedding (~2 minutes for 8 real PDFs) before
+  giving up on synthesis with `"Choose how to run the AI features first."` — this account never
+  chose a model, and the server's `FREE_TIER` is on, so nothing is sent to it until it does; a
+  correct, intentional skip, not a bug. The success path itself (a real `ResearchReport` actually
+  getting written) is covered by the automated test with a deterministic fake model instead, to
+  avoid spending the account's real free-tier allowance just to prove the plumbing works.
+  `/public/watches/{id}` real-checked 404 → 200 across the `is_public` toggle. The webhook `/test`
+  endpoint made a real HTTPS request to `hooks.slack.com` with a deliberately invalid path and
+  correctly reported `{"ok": false}` from Slack's own response — and a non-Slack/Discord host was
+  refused with 422 before any request was made.
+- Backend: 648 passed, 9 skipped (up from Session 13's 623 — 25 new tests). Full suite re-run
+  clean both before and after the status-timing fix. Ruff clean; mypy adds no new categories
+  beyond the one already accepted in `services/agent/relevance.py`.
+- Frontend: 170 passed (9 new: `WatchDialog`'s two new toggles, `WatchPage`'s trace panel/review
+  link/public-link box, `NotificationChannels`, `PublicWatchPage`). Typecheck and lint clean.
+
+#### Not yet verified / known limitations
+- The success path of synthesis (an actual `ResearchReport` produced) was only verified under the
+  deterministic fake LLM used by tests, not against a real model — deliberately, to not spend the
+  account's real free-tier quota. The user can verify this themselves by choosing a model in
+  Settings → AI first.
+- No real Slack/Discord channel was available to confirm an actual message arrives — only that
+  the request reaches the real API and a failure is reported correctly.
+- The UI was not visually exercised in a browser this session either (same tooling gap as Session
+  13).
+
+### Session 13: 2026-10-17 — Research Watches, an autonomous agent
+
+User request: make the project stand out to recruiters beyond "just a RAG bot" — something that
+shows the system working on its own, not only when asked.
+
+#### Delivered
+- **"Research Watches"**: a user saves a watch (name, topic/query, optional link to a Collection
+  and/or a Research Project, interval, relevance threshold, `auto_import`). On a schedule, or
+  "Run now", the system searches arXiv for new papers since the watch's last search (a lookback
+  window on the first run), scores each candidate's abstract by embedding cosine similarity
+  against the topic (averaged 50/50 with a linked project's research question, if any), keeps
+  those above the threshold (capped per run), and records a digest entry for each — importing it
+  into the library and attaching it to the collection when `auto_import` is on (**default off**: a
+  review queue, a deliberate restraint choice), otherwise leaving a one-click "Add to library" for
+  the user. A best-effort LLM "why relevant" one-line blurb is attempted per candidate (never
+  blocks the run; skipped entirely on the free tier, same reasoning as auto-summarization). A
+  notification is written only when at least one candidate was kept — a zero-result run stays
+  quiet in the bell but is still visible in run history.
+- **No Celery beat**: the schedule is an in-process asyncio loop (`workers/scheduler.py`) started
+  from `main.py`'s `lifespan`, the same shape as the existing model-warmup task — works
+  identically with inline jobs (dev/SQLite) and Celery (Docker). Claiming a due watch uses an
+  optimistic conditional `UPDATE ... WHERE next_run_at <= :now` (SQLite-safe, no `SELECT FOR
+  UPDATE`).
+- **`services/arxiv.py` gained `search()`** (by query, not just fetch-by-id) and
+  `parse_atom_entries()` (every `<entry>` in a multi-result feed); `parse_atom`'s per-entry
+  parsing was refactored into a shared `_parse_entry()` so `fetch()` is unchanged.
+- New tables: `agent_watches`, `agent_runs`, `agent_digest_entries`, `notifications` (migration
+  `737abcbc799c`). New routes: `POST/GET/PATCH/DELETE /watches`, `.../run`, `.../runs`,
+  `.../digest`, `.../digest/{id}/import`; `GET /notifications`, `.../unread-count`, `.../{id}/read`,
+  `.../read-all`.
+- Frontend: a "Watches" nav entry, `WatchesPage`/`WatchPage`, a create/edit dialog, and a
+  `NotificationBell` (unread-count badge, mark read / mark all read) mounted in `AppShell`.
+- **A real correctness bug found and fixed while writing this**: a job enqueued by code that runs
+  *outside* a request (the scheduler's tick, and the watch-run job itself, when it auto-imports a
+  match) must call `run_after_commit(session)` itself — the normal `DbSession` FastAPI dependency
+  does that after every request, but nothing does it for code that isn't handling a request.
+  Missed, an auto-imported paper's `document.process` job would be registered but never
+  dispatched, and the document would stay `queued` forever. A dedicated regression test disables
+  the call and confirms the test fails, then restores it and confirms it passes.
+- **A second real bug found via a scheduler test**: the scheduler's claim `UPDATE` used
+  SQLAlchemy's default `synchronize_session="evaluate"`, which compares the update's `WHERE`
+  clause against already-loaded in-memory objects — on SQLite those come back with naive
+  datetimes while `utcnow()` is timezone-aware, so the comparison raised `TypeError: can't compare
+  offset-naive and offset-aware datetimes`. Fixed with `execution_options(synchronize_session=False)`
+  (nothing in the scheduler relies on in-memory sync here).
+
+#### Verified
+- Backend: 623 passed, 9 skipped (up from 599 passed before this session) — 24 new tests
+  (`test_arxiv_search.py`, `test_agent_relevance_unit.py`, `test_agent_scheduler_unit.py`,
+  `test_agent_watches_api.py`, `test_notifications_api.py`) plus the required
+  `test_tenant_isolation.py` fixture extension (`watch_id`, `entry_id`, `notification_id`). Ruff
+  clean on every changed file; mypy adds 2 new "Returning Any from ndarray" notes in
+  `services/agent/relevance.py` — the same pre-existing category already present, unaddressed, in
+  4 other embedding-provider functions.
+- Frontend: 161 passed (up from 149) — `WatchDialog`, `WatchesPage`, `WatchPage`,
+  `NotificationBell` tests. Typecheck and lint clean.
+- **Real end-to-end walkthrough** against the live dev server (real arXiv API, real BGE-small
+  embeddings, local Ollama): created a watch for "retrieval augmented generation", ran it —
+  30 candidates found on live arXiv, 10 kept above a 0.2 threshold (real cosine scores clustered
+  0.65–0.72), a notification written, run completed in ~3.5 s. Manually added the top-scored
+  digest entry to the library: the real PDF, title and all 6 authors came back correctly from
+  arXiv, and the paper reached `ready` after its normal `document.process` run. The LLM blurb
+  came back empty because the dev machine's Ollama wasn't running at the time — confirmed
+  graceful, not a crash. No browser-automation tool was available in this session to click
+  through the UI visually; the API-level walkthrough above is what verifies the real pipeline
+  end to end.
+
+#### Not yet verified / known limitations
+- The scheduler has only been load-tested at the unit level with a stubbed run, not under
+  multiple concurrent backend processes (the optimistic `UPDATE` is designed for that case but
+  untested there).
+- The "why relevant" blurb's quality (beyond "doesn't crash the run") hasn't been evaluated.
+- The UI has not been visually exercised in a real browser this session.
+
+#### Open
+- arXiv's `all:<query>` search is unquoted (keyword-style): a multi-word topic is effectively
+  ANDed, which can starve a broad topic of results; quoting would be exact-phrase, which can be
+  too strict. Shipped as unquoted; worth tuning once real watches have run for a while.
 
 ### Session 12: 2026-10-10 — a free shared model for a public site; who can see a user's work
 

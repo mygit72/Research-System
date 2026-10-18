@@ -13,8 +13,9 @@ Events (sent to the browser as server-sent events):
     done          {message_id, usage, timings_ms}
     error         {message, hint}
 
-If nothing relevant is found the model is not called at all: the answer is the
-fixed "insufficient evidence" sentence — the cheapest way to never hallucinate.
+Paper retrieval provides context for the model. If no relevant passage is found,
+the model can still answer a general question and labels that background as not
+grounded in the indexed papers; paper-specific claims remain limited to evidence.
 """
 
 from __future__ import annotations
@@ -40,15 +41,25 @@ from app.services.llm import (
     INSUFFICIENT,
     GenerationParams,
     LLMError,
+    Message,
+    get_coding_llm,
     get_llm,
     provider_name,
+    resolve_code_model,
     resolve_model,
 )
 from app.services.models.manager import model_manager
 from app.services.rag.answer_cache import cache_fields, find_reusable
 from app.services.rag.citations import split_claims, validate_citations
+from app.services.rag.code_review import has_python_code, review_generated_code
 from app.services.rag.context import Evidence, select_context
-from app.services.rag.prompt import PROMPT_VERSION, build_messages
+from app.services.rag.prompt import (
+    PAPER_CHAT_PROMPT_VERSION,
+    PROMPT_VERSION,
+    build_messages,
+    is_build_request,
+    is_gpt_build_request,
+)
 from app.services.rag.query import analyze_query
 from app.services.rag.verify import (
     LexicalVerifier,
@@ -153,6 +164,7 @@ async def answer_question(
         history = await load_history(session, conversation_id, settings.chat_history_turns)
         scope_ids = [uuid.UUID(d) for d in conversation.document_ids or []]
         papers_scope = conversation.scope == ConversationScope.PAPERS
+        paper_chat = papers_scope and len(scope_ids) == 1
         session.add(
             ChatMessage(
                 conversation_id=conversation_id, user_id=user_id, role="user", content=question
@@ -170,12 +182,20 @@ async def answer_question(
     verification: Verification | None = None
     support: dict[str, Any] | None = None
     status, error, final_text = MessageStatus.COMPLETE, None, ""
+    code_request = is_build_request(question, history)
+    gpt_code_request = is_gpt_build_request(question, history)
+    answer_model = resolve_code_model(settings) if code_request else resolve_model(settings)
+    answer_max_tokens = (
+        max(settings.llm_max_tokens, 4096)
+        if code_request
+        else settings.llm_max_tokens
+    )
     generation_config = {
         "llm_provider": provider_name(settings),
-        "llm_model": None,
+        "llm_model": answer_model,
         "temperature": settings.llm_temperature,
-        "max_tokens": settings.llm_max_tokens,
-        "prompt_version": PROMPT_VERSION,
+        "max_tokens": answer_max_tokens,
+        "prompt_version": PAPER_CHAT_PROMPT_VERSION if paper_chat else PROMPT_VERSION,
         "embedding_model": settings.embedding_model,
         "reranker": settings.reranker_model if settings.reranker_provider != "none" else None,
         "chunking_strategy": settings.chunking_strategy,
@@ -202,6 +222,7 @@ async def answer_question(
             document_ids=scope_ids if papers_scope else None,
             year_from=analysis.year_from,
             year_to=analysis.year_to,
+            include_references=analysis.intent == "citation_search",
         )
         request = SearchRequest(
             analysis.retrieval_query,
@@ -218,34 +239,6 @@ async def answer_question(
                 outcome = await search(session, settings, user_id, request)
                 analysis.notes.append("No papers matched the year filter, so it was not applied")
                 trace["query"] = analysis.as_dict()
-            if (
-                papers_scope
-                and analysis.about_the_paper
-                and outcome.reranker
-                and outcome.results
-                and all(r.score < settings.context_min_relevance for r in outcome.results)
-            ):
-                # The reranker judges word-level relevance, so "what is the main contribution?"
-                # scores ~0 against every passage. The chat is already limited to these papers
-                # and the question is about them, so use the keyword + meaning ranking instead.
-                request.rerank = False
-                outcome = await search(session, settings, user_id, request)
-                analysis.notes.append(
-                    "General question about the paper: passages ranked without the reranker"
-                )
-                trace["query"] = analysis.as_dict()
-        trace["search"] = {
-            "status": outcome.status,
-            "retrievers": outcome.retrievers,
-            "reranker": outcome.reranker,
-            "searched_papers": outcome.searched_papers,
-            "warnings": outcome.warnings,
-            "timings_ms": outcome.timings_ms,
-            "stages": {
-                name: entries[:TRACE_STAGE_LIMIT]
-                for name, entries in (outcome.trace or {}).get("stages", {}).items()
-            },
-        }
         mark = lap("search", mark)
 
         # --- select context ------------------------------------------------------------------
@@ -260,7 +253,42 @@ async def answer_question(
             settings.context_max_passages,
             settings.context_min_relevance,
         )
+        # A few weak reranker hits can sit above the best paper passages and leave no usable
+        # context. Retry in fused hybrid order, still restricted to this conversation's papers.
+        if (
+            papers_scope
+            and analysis.about_the_paper
+            and outcome.reranker
+            and outcome.results
+            and not selection.evidence
+        ):
+            request.rerank = False
+            async with session_factory() as session:
+                outcome = await search(session, settings, user_id, request)
+            analysis.notes.append(
+                "No passage cleared the relevance threshold; retried paper-scoped hybrid ranking "
+                "without the reranker"
+            )
+            trace["query"] = analysis.as_dict()
+            selection = select_context(
+                outcome.results,
+                settings.context_token_budget,
+                settings.context_max_passages,
+                settings.context_min_relevance,
+            )
         evidence = selection.evidence
+        trace["search"] = {
+            "status": outcome.status,
+            "retrievers": outcome.retrievers,
+            "reranker": outcome.reranker,
+            "searched_papers": outcome.searched_papers,
+            "warnings": outcome.warnings,
+            "timings_ms": outcome.timings_ms,
+            "stages": {
+                name: entries[:TRACE_STAGE_LIMIT]
+                for name, entries in (outcome.trace or {}).get("stages", {}).items()
+            },
+        }
         trace["context"] = {"tokens": selection.tokens, "decisions": selection.decisions}
         yield {
             "type": "evidence",
@@ -275,7 +303,7 @@ async def answer_question(
             async with session_factory() as session:
                 reuse = await find_reusable(
                     session, settings, user_id, question, evidence,
-                    resolve_model(settings), PROMPT_VERSION,
+                    generation_config["llm_model"], generation_config["prompt_version"],
                 )  # fmt: skip
         if reuse is not None:
             earlier = reuse.message
@@ -318,31 +346,104 @@ async def answer_question(
             if not fresh and not history and evidence and settings.answer_cache_enabled:
                 metrics.inc("answer_cache_total", result="miss")
             # --- generate ------------------------------------------------------------------------
-            if not evidence:
-                parts.append(INSUFFICIENT)
-                yield {"type": "token", "text": INSUFFICIENT}
-                generation_config["llm_model"] = None
-            else:
-                llm = get_llm(settings, UsageScope(user_id, "chat"))
-                generation_config["llm_model"] = resolve_model(settings)
-                yield {"type": "status", "stage": "writing", "detail": "Writing the answer"}
-                messages = build_messages(question, evidence, history)
-                params = GenerationParams(settings.llm_max_tokens, settings.llm_temperature)
-                first_token = None
-                async for event in llm.stream(messages, params):
-                    if event.text:
-                        if first_token is None:
-                            first_token = time.perf_counter()
-                            timings["first_token"] = round((first_token - started) * 1000, 1)
+            llm = (
+                get_coding_llm(settings, UsageScope(user_id, "chat"))
+                if code_request
+                else get_llm(settings, UsageScope(user_id, "chat"))
+            )
+            generation_config["llm_provider"] = llm.name
+            generation_config["llm_model"] = llm.model_id
+            yield {"type": "status", "stage": "writing", "detail": "Writing the answer"}
+            messages = build_messages(
+                question,
+                evidence,
+                history,
+                paper_chat=paper_chat,
+            )
+            params = GenerationParams(
+                answer_max_tokens,
+                settings.llm_temperature,
+                context_window=settings.code_llm_context_window if code_request else None,
+            )
+            first_token = None
+            draft_parts: list[str] = []
+            async for event in llm.stream(messages, params):
+                if event.text:
+                    if first_token is None:
+                        first_token = time.perf_counter()
+                        timings["first_token"] = round((first_token - started) * 1000, 1)
+                    if code_request:
+                        draft_parts.append(event.text)
+                    else:
                         parts.append(event.text)
                         yield {"type": "token", "text": event.text}
-                    if event.done:
-                        usage = {
-                            "input_tokens": event.usage.input_tokens,
-                            "output_tokens": event.usage.output_tokens,
-                        }
-                        if event.model:
-                            generation_config["llm_model"] = event.model
+                if event.done:
+                    usage["input_tokens"] += event.usage.input_tokens
+                    usage["output_tokens"] += event.usage.output_tokens
+                    if event.model:
+                        generation_config["llm_model"] = event.model
+
+            if code_request:
+                draft = "".join(draft_parts)
+                review = review_generated_code(draft, gpt=gpt_code_request)
+                for _attempt in range(2):
+                    if not review:
+                        break
+                    yield {
+                        "type": "status",
+                        "stage": "writing",
+                        "detail": "Reviewing and correcting the code",
+                    }
+                    repair_request = (
+                        "Rewrite the previous answer as one corrected, complete implementation. "
+                        "The static code review found these problems:\n- "
+                        + "\n- ".join(review)
+                        + "\nKeep the explanation short. Return a complete fenced code block, "
+                        "not a patch. "
+                        "Do not claim a check passed unless the returned code meets it."
+                    )
+                    repair_messages = [
+                        *messages,
+                        Message("assistant", draft),
+                        Message("user", repair_request),
+                    ]
+                    repaired_parts: list[str] = []
+                    try:
+                        async for event in llm.stream(repair_messages, params):
+                            if event.text:
+                                repaired_parts.append(event.text)
+                            if event.done:
+                                usage["input_tokens"] += event.usage.input_tokens
+                                usage["output_tokens"] += event.usage.output_tokens
+                                if event.model:
+                                    generation_config["llm_model"] = event.model
+                    except LLMError:
+                        log.warning("code_repair_failed", model=llm.model_id)
+                    repaired = "".join(repaired_parts)
+                    if not repaired or repaired == draft:
+                        break
+                    repaired_review = review_generated_code(repaired, gpt=gpt_code_request)
+                    if len(repaired_review) > len(review):
+                        break
+                    draft, review = repaired, repaired_review
+
+                if review:
+                    unresolved = "\n- ".join(review)
+                    draft += (
+                        "\n\n**Code review note:** I could not verify this draft. "
+                        "Remaining issues:\n- "
+                        + unresolved
+                        + "\nTreat it as unverified; it has not been executed."
+                    )
+                elif has_python_code(draft):
+                    checked = (
+                        "Python syntax and the requested GPT structure passed static checks."
+                        if gpt_code_request
+                        else "Python syntax passed a static check."
+                    )
+                    draft += f"\n\n**Code check:** {checked} The code has not been executed."
+                parts.append(draft)
+                yield {"type": "token", "text": draft}
             mark = lap("generate", mark)
 
             # --- citations + verification --------------------------------------------------------

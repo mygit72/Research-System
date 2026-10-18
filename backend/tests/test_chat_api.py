@@ -11,9 +11,10 @@ from httpx import AsyncClient
 
 from app.core.config import Settings
 from app.demo import sample_papers as sp
-from app.services.llm import INSUFFICIENT, FakeLLM, LLMError
+from app.services.llm import FakeLLM, LLMError, StreamEvent, Usage
 from app.services.rag.prompt import PROMPT_VERSION
 from tests.conftest import register
+from tests.test_code_review import VALID_GPT
 from tests.test_indexing_api import upload
 
 
@@ -96,7 +97,7 @@ async def test_answer_streams_with_valid_citations_and_verification(
     assert cited[0]["quote"] and cited[0]["page_start"] >= 1
 
 
-async def test_unanswerable_question_does_not_call_the_model(
+async def test_general_question_without_matching_passages_uses_the_model(
     auth_client: AsyncClient,
     library: dict[str, str],
     settings: Settings,
@@ -108,26 +109,87 @@ async def test_unanswerable_question_does_not_call_the_model(
     calls: list[int] = []
     original = FakeLLM.answer
 
-    def counting(self: FakeLLM, prompt: str) -> str:
+    def general_answer(self: FakeLLM, prompt: str) -> str:
         calls.append(1)
+        if "Who won the 1998 football world cup final?" in prompt:
+            return (
+                "**General background (not grounded in indexed papers):**\n\n"
+                "This question can still be answered by the configured language model."
+            )
         return original(self, prompt)
 
-    monkeypatch.setattr(FakeLLM, "answer", counting)
+    monkeypatch.setattr(FakeLLM, "answer", general_answer)
     conversation = await new_conversation(auth_client)
     events = await ask(auth_client, conversation, "Who won the 1998 football world cup final?")
     answer = of(events, "answer")[0]["text"]
-    assert answer.startswith(INSUFFICIENT[:30])
-    assert of(events, "verification")[0]["label"] == "Insufficient evidence"
-    assert calls == []
+    assert answer.startswith("**General background (not grounded in indexed papers):**")
+    assert "configured language model" in answer
+    assert "writing" in [e["stage"] for e in of(events, "status")]
+    assert calls == [1]
+    assert of(events, "verification") == []
     assert of(events, "evidence")[0]["items"] == []
 
 
-async def test_empty_library_answers_insufficient_without_model(auth_client: AsyncClient) -> None:
+async def test_empty_library_answers_general_question_with_model(
+    auth_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+    original = FakeLLM.answer
+
+    def general_answer(self: FakeLLM, prompt: str) -> str:
+        calls.append(prompt)
+        if "What is reciprocal rank fusion?" in prompt:
+            return (
+                "**General background (not grounded in indexed papers):**\n\n"
+                "Reciprocal rank fusion combines ranked result lists using each result's position."
+            )
+        return original(self, prompt)
+
+    monkeypatch.setattr(FakeLLM, "answer", general_answer)
     conversation = await new_conversation(auth_client)
     events = await ask(auth_client, conversation, "What is reciprocal rank fusion?")
     assert of(events, "evidence")[0]["items"] == []
-    assert of(events, "answer")[0]["text"] == INSUFFICIENT
-    assert "writing" not in [e["stage"] for e in of(events, "status")]
+    answer = of(events, "answer")[0]["text"]
+    assert answer.startswith("**General background (not grounded in indexed papers):**")
+    assert "combines ranked result lists" in answer
+    assert "writing" in [e["stage"] for e in of(events, "status")]
+    assert calls
+
+
+async def test_paper_chat_answers_general_question_without_passages(
+    auth_client: AsyncClient,
+    library: dict[str, str],
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.rag.context import ContextSelection
+
+    monkeypatch.setattr(
+        "app.services.rag.pipeline.select_context",
+        lambda *args, **kwargs: ContextSelection(evidence=[], decisions=[], tokens=0),
+    )
+    calls: list[str] = []
+    original = FakeLLM.answer
+
+    def general_answer(self: FakeLLM, prompt: str) -> str:
+        calls.append(prompt)
+        if "Answer ordinary general questions directly" in prompt:
+            return (
+                "**General background (not grounded in the selected paper)**\n\n"
+                "A transformer uses attention layers to process relationships between tokens."
+            )
+        return original(self, prompt)
+
+    monkeypatch.setattr(FakeLLM, "answer", general_answer)
+    conversation = await new_conversation(auth_client, document_ids=[library["retrieval"]])
+    events = await ask(auth_client, conversation, "How can I build a simple GPT?")
+
+    answer = of(events, "answer")[0]["text"]
+    assert not of(events, "evidence")[0]["items"]
+    assert answer.startswith("**General background (not grounded in the selected paper)**")
+    assert "transformer uses attention" in answer
+    assert "writing" in [e["stage"] for e in of(events, "status")]
+    assert calls and "How can I build a simple GPT?" in calls[0]
 
 
 async def test_paper_chat_only_uses_that_paper(
@@ -142,6 +204,97 @@ async def test_paper_chat_only_uses_that_paper(
     ).json()
     assert [c["id"] for c in listed["items"]] == [conversation]
     assert listed["items"][0]["scope"] == "papers"
+
+    await new_conversation(
+        auth_client, document_ids=[library["retrieval"], library["lora"]]
+    )
+    paper_only = (
+        await auth_client.get(
+            f"/api/v1/chat/conversations?document_id={library['retrieval']}&single_paper=true"
+        )
+    ).json()
+    assert [c["id"] for c in paper_only["items"]] == [conversation]
+
+
+async def test_gpt_code_request_repairs_an_incomplete_first_draft(
+    auth_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class DraftThenRepair:
+        name = "ollama"
+        model_id = "test-coder"
+        is_remote = False
+
+        def __init__(self) -> None:
+            self.calls: list[tuple[list[Any], Any]] = []
+
+        async def stream(self, messages: list[Any], params: Any) -> Any:
+            self.calls.append((messages, params))
+            response = (
+                '```python\nprint("hello")\n```'
+                if len(self.calls) == 1
+                else VALID_GPT
+            )
+            yield StreamEvent(
+                text=response,
+                done=True,
+                usage=Usage(input_tokens=10, output_tokens=20),
+                model=self.model_id,
+            )
+
+    coder = DraftThenRepair()
+    monkeypatch.setattr("app.services.rag.pipeline.get_coding_llm", lambda *args: coder)
+    conversation = await new_conversation(auth_client)
+
+    events = await ask(auth_client, conversation, "Build a GPT from scratch.")
+
+    answer = of(events, "answer")[0]["text"]
+    assert len(coder.calls) == 2
+    assert coder.calls[0][1].max_tokens >= 4096
+    assert coder.calls[0][1].context_window == 8192
+    assert "static code review found these problems" in coder.calls[1][0][-1].content
+    assert "Reviewing and correcting the code" in [e["detail"] for e in of(events, "status")]
+    assert "Python syntax and the requested GPT structure passed static checks" in answer
+    assert "Remaining issues" not in answer
+    detail = (await auth_client.get(f"/api/v1/chat/conversations/{conversation}")).json()
+    assert detail["messages"][-1]["generation_config"]["llm_model"] == "test-coder"
+
+
+async def test_gpt_code_request_stops_after_two_unsuccessful_repairs(
+    auth_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class StillIncomplete:
+        name = "ollama"
+        model_id = "test-coder"
+        is_remote = False
+
+        def __init__(self) -> None:
+            self.responses = [
+                '```python\nprint("draft")\n```',
+                "```python\nclass CausalSelfAttention:\n    pass\n```\n# first repair",
+                "```python\nclass CausalSelfAttention:\n    pass\n```\n# second repair",
+            ]
+            self.calls = 0
+
+        async def stream(self, messages: list[Any], params: Any) -> Any:
+            response = self.responses[self.calls]
+            self.calls += 1
+            yield StreamEvent(
+                text=response,
+                done=True,
+                usage=Usage(input_tokens=10, output_tokens=20),
+                model=self.model_id,
+            )
+
+    coder = StillIncomplete()
+    monkeypatch.setattr("app.services.rag.pipeline.get_coding_llm", lambda *args: coder)
+    conversation = await new_conversation(auth_client)
+
+    events = await ask(auth_client, conversation, "Build a GPT from scratch.")
+
+    answer = of(events, "answer")[0]["text"]
+    assert coder.calls == 3  # one draft and no more than two repair attempts
+    assert len([e for e in of(events, "status") if "Reviewing" in e["detail"]]) == 2
+    assert "Code review note" in answer and "Treat it as unverified" in answer
 
 
 async def test_follow_up_uses_the_previous_question(
@@ -247,11 +400,25 @@ async def test_ai_status_reports_language_model_readiness(
 
 
 async def test_general_questions_in_paper_chat_still_find_evidence(
-    auth_client: AsyncClient, library: dict[str, str], settings: Settings
+    auth_client: AsyncClient,
+    library: dict[str, str],
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # A floor above every score mimics the cross-encoder on "what is the main contribution?"
     # (no shared words, ~0 for every passage); in a paper's chat it still gets passages.
     settings.reranker_provider, settings.context_min_relevance = "lexical", 0.99
+    original = FakeLLM.answer
+
+    def general_answer(self: FakeLLM, prompt: str) -> str:
+        if "Who won the 1998 football world cup final?" in prompt:
+            return (
+                "**General background (not grounded in the selected paper):**\n\n"
+                "This question can still be answered by the configured language model."
+            )
+        return original(self, prompt)
+
+    monkeypatch.setattr(FakeLLM, "answer", general_answer)
     paper_chat = await new_conversation(auth_client, document_ids=[library["lora"]])
     events = await ask(auth_client, paper_chat, "What is the main contribution of this paper?")
     assert of(events, "query")[0]["analysis"]["about_the_paper"]
@@ -261,10 +428,12 @@ async def test_general_questions_in_paper_chat_still_find_evidence(
     items = of(events, "evidence")[0]["items"]
     assert items and {i["document"]["id"] for i in items} == {library["lora"]}
 
-    # Off-topic questions in the same chat are still refused without the model.
+    # General questions in paper chat are answered without attributing them to the paper.
     events = await ask(auth_client, paper_chat, "Who won the 1998 football world cup final?")
     assert of(events, "evidence")[0]["items"] == []
-    assert of(events, "answer")[0]["text"] == INSUFFICIENT
+    answer = of(events, "answer")[0]["text"]
+    assert answer.startswith("**General background (not grounded in the selected paper):**")
+    assert "configured language model" in answer
 
     # In library chat the floor applies as usual.
     library_chat = await new_conversation(auth_client)

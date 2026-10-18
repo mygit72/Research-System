@@ -19,16 +19,20 @@ export function PaperChat({
   onConversation,
   onOpen,
   onClose,
+  initialQuestion,
+  initialQuestionKey,
 }: {
   documentId: string
   conversationId: string | null
   onConversation: (id: string | null) => void
   onOpen: OpenSource
   onClose: () => void
+  initialQuestion?: string | null
+  initialQuestionKey?: string | number
 }) {
   const history = useQuery({
     queryKey: ['chat', 'conversations', { documentId }],
-    queryFn: () => chatApi.list({ documentId, limit: 50 }),
+    queryFn: () => chatApi.list({ documentId, singlePaper: true, limit: 50 }),
   })
   const others = history.data?.items ?? []
   const [selected, setSelected] = useConversationSelection(conversationId)
@@ -39,7 +43,7 @@ export function PaperChat({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-12 shrink-0 items-center gap-1 border-b border-border px-3">
-        <h2 className="min-w-0 flex-1 truncate text-small font-semibold text-text">Ask about this paper</h2>
+        <h2 className="min-w-0 flex-1 truncate text-small font-semibold text-text">Ask anything</h2>
         {others.length > 0 && (
           <Dropdown.Root>
             <Dropdown.Trigger asChild>
@@ -77,12 +81,15 @@ export function PaperChat({
           documentIds={[documentId]}
           onCreated={select}
           onOpen={onOpen}
-          placeholder="Ask about this paper…"
+          placeholder="Ask anything…"
           emptyState={{
-            title: 'Ask about this paper',
-            description: 'Answers cite pages of this paper. Click a citation to jump to it in the reader.',
+            title: 'Ask anything',
+            description:
+              'Ask about the paper or any other topic. Paper-specific claims cite its passages; general background is labeled separately. Follow up to go deeper.',
           }}
           suggestions={PAPER_SUGGESTIONS}
+          initialQuestion={initialQuestion}
+          initialQuestionKey={initialQuestionKey}
         />
       </div>
     </div>

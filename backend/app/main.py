@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -29,6 +30,7 @@ from app.services.vectorstore import close_vector_store
 from app.workers import handlers  # noqa: F401  (registers job handlers)
 from app.workers.dispatcher import get_dispatcher
 from app.workers.recovery import recover_interrupted_jobs
+from app.workers.scheduler import run_scheduler
 
 log = get_logger(__name__)
 
@@ -116,6 +118,9 @@ def _warm_models(settings: Settings) -> None:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
+    if settings.hf_hub_offline:
+        # Set before lazy imports of sentence-transformers/transformers in the warmup task.
+        os.environ["HF_HUB_OFFLINE"] = "1"
     settings.validate_for_production()
     configure_logging(settings.log_level, settings.log_json)
     model_manager.max_loaded = settings.max_loaded_models
@@ -132,7 +137,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if settings.job_backend == JobBackend.INLINE and settings.resume_jobs_on_startup:
             # Jobs that were running when the process stopped resume (or are failed cleanly).
             await recover_interrupted_jobs(get_session_factory(), get_dispatcher(settings))
+        scheduler_task = None
+        if settings.agent_scheduler_enabled and settings.environment != Environment.TEST:
+            scheduler_task = asyncio.create_task(run_scheduler(settings))
         yield
+        if scheduler_task is not None and not scheduler_task.done():
+            scheduler_task.cancel()
         if warmup is not None and not warmup.done():
             warmup.cancel()
         try:

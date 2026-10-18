@@ -1,0 +1,33 @@
+{
+  "dataset": "scifact (original release, claims_dev.jsonl)",
+  "verifier_model": "cross-encoder/nli-deberta-v3-xsmall",
+  "n_instances": 209,
+  "n_claims_skipped_not_enough_info": 112,
+  "n_support": 138,
+  "n_contradict": 71,
+  "majority_class_baseline_accuracy": 0.6603,
+  "accuracy_app_classify_thresholds": 0.5263,
+  "confusion_matrix_app_classify_thresholds": {
+    "SUPPORT": {
+      "SUPPORT": 45,
+      "CONTRADICT": 93
+    },
+    "CONTRADICT": {
+      "SUPPORT": 6,
+      "CONTRADICT": 65
+    }
+  },
+  "accuracy_raw_argmax_entail_vs_contradict": 0.7464,
+  "confusion_matrix_raw_argmax": {
+    "SUPPORT": {
+      "SUPPORT": 91,
+      "CONTRADICT": 47
+    },
+    "CONTRADICT": {
+      "SUPPORT": 6,
+      "CONTRADICT": 65
+    }
+  },
+  "verify_seconds_total": 26.1,
+  "verify_ms_per_instance": 125.0
+}

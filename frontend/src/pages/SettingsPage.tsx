@@ -18,6 +18,7 @@ import { ApiError } from '@/services/http'
 import { useAuth } from '@/stores/auth'
 import { usePreferences } from '@/stores/preferences'
 import { ModelChoice } from './settings/ModelChoice'
+import { NotificationChannels } from './settings/NotificationChannels'
 import { PrivacyFacts } from './settings/PrivacyFacts'
 import type { FontScale, Theme } from '@/types/api'
 
@@ -505,6 +506,9 @@ export function SettingsPage() {
         </Section>
         <Section title="AI" description="The models that power search and answers.">
           <AIConfiguration />
+        </Section>
+        <Section title="Notifications" description="Send a watch's found-papers alert to Slack or Discord too.">
+          <NotificationChannels />
         </Section>
         <Section title="Advanced" description="Options for technical users.">
           <AdvancedToggle />

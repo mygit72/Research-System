@@ -31,6 +31,10 @@ import type {
   ProjectUpdate,
 } from '@/types/api'
 import { StarterCodeStep } from './StarterCode'
+import { ClaimExperimentWorkbench } from './ClaimExperimentWorkbench'
+import { ExperimentResultsLab } from './ExperimentResultsLab'
+import { PredictionFailureExplorer } from './PredictionFailureExplorer'
+import { ResearchLineageMap } from './ResearchLineageMap'
 import { StepGuidePanel } from './StepGuide'
 
 const STEPS: { key: ProjectStep; label: string; hint: string }[] = [
@@ -44,7 +48,7 @@ const STEPS: { key: ProjectStep; label: string; hint: string }[] = [
 
 const NAV: { key: GuideStep; label: string; hint: string }[] = [
   ...STEPS,
-  { key: 'code', label: 'Starter code', hint: 'Runnable code generated from your plan' },
+  { key: 'code', label: 'Starter code', hint: 'Paper evidence beside an editable model draft' },
 ]
 
 type Save = (body: ProjectUpdate, message?: string) => void
@@ -357,9 +361,14 @@ function ExperimentsStep({ project, save }: { project: Project; save: Save }) {
   return (
     <div className="space-y-6">
       <StepHeader title="Experiments">
-        A plan built from your method choices: one main comparison per dataset, an ablation and an analysis. Edit
-        anything; set a deadline to spread milestones.
+        Turn a passage from your papers into a testable claim, then plan your project runs. This workbench stress-tests
+        the scaled attention mechanism and saves the claim, settings, outputs and citations together. Import your run
+        outputs below to compare aggregate metrics and inspect difficult examples.
       </StepHeader>
+      <ResearchLineageMap project={project} />
+      <ClaimExperimentWorkbench project={project} />
+      <ExperimentResultsLab project={project} />
+      <PredictionFailureExplorer project={project} />
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1 text-caption font-medium text-muted">
           Deadline

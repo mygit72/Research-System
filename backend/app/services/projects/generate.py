@@ -408,8 +408,12 @@ async def run_step(
     try:
         if step == "questions":
             result = await suggest_questions(session_factory, settings, project, report)
-        else:
+        elif step == "outline":
             result = await suggest_outline(session_factory, settings, project, report)
+        else:
+            from app.services.projects.draft_code import draft_code
+
+            result = await draft_code(session_factory, settings, project, report)
         error = None
     except Exception as exc:  # stored on the step so the page can say what happened
         result, error = (
@@ -432,5 +436,5 @@ async def run_step(
     return {
         "step": step,
         "error": error,
-        "items": len(result.get("suggestions", result.get("sections", []))),
+        "items": len(result.get("suggestions", result.get("sections", result.get("drafts", [])))),
     }

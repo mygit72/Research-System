@@ -9,7 +9,7 @@
 # into Ollama; then starts the app at http://localhost:5173. Everything stays on this computer.
 # Any model you pull later (ollama pull <name>) can be chosen in Settings -> AI.
 param(
-    [string]$Model = 'qwen2.5:3b',
+    [string]$Model,
     [switch]$CheckOnly,
     [switch]$NoML  # skip PyTorch + embedding models (~1 GB); search then falls back to keywords
 )
@@ -18,6 +18,21 @@ $root = Split-Path -Parent $PSScriptRoot
 $backend = Join-Path $root 'backend'
 $frontend = Join-Path $root 'frontend'
 $envFile = Join-Path $backend '.env'
+$CodeModel = ''
+
+# Default to the model already configured in backend\.env (if any), so a rerun doesn't
+# pull a different model than the one you're actually using. -Model still overrides this.
+if (-not $Model) {
+    if (Test-Path $envFile) {
+        $existingLine = Get-Content $envFile | Where-Object { $_ -match '^LLM_MODEL=' } | Select-Object -First 1
+        if ($existingLine) { $Model = ($existingLine -split '=', 2)[1].Trim() }
+    }
+    if (-not $Model) { $Model = 'qwen2.5:3b' }
+}
+if (Test-Path $envFile) {
+    $codeModelLine = Get-Content $envFile | Where-Object { $_ -match '^CODE_LLM_MODEL=' } | Select-Object -First 1
+    if ($codeModelLine) { $CodeModel = ($codeModelLine -split '=', 2)[1].Trim() }
+}
 
 function Find-Command($name) { $c = Get-Command $name -ErrorAction SilentlyContinue; if ($c) { $c.Source } }
 
@@ -121,6 +136,17 @@ if ($ollama) {
         & $ollama pull $Model
     } else {
         Write-Host "Ollama has $Model."
+    }
+    if ($CodeModel -and $CodeModel -ne $Model) {
+        $models = Get-OllamaModels
+        if ($null -eq $models) {
+            Write-Host "Could not check whether coding model $CodeModel is installed."
+        } elseif (-not ($models -contains $CodeModel -or $models -contains "${CodeModel}:latest")) {
+            Write-Host "Downloading coding model $CodeModel into Ollama (once)..."
+            & $ollama pull $CodeModel
+        } else {
+            Write-Host "Ollama has coding model $CodeModel."
+        }
     }
 } else {
     Write-Host 'Ollama is not installed: answers need an API key (Settings -> AI) until you install it.' -ForegroundColor Yellow

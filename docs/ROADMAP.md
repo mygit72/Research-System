@@ -47,7 +47,7 @@ These are proposed extras, slotted into the phase where they fit naturally.
 | **Reading status & priority** (to-read / reading / done) | 9 | Makes the library a daily-use tool. |
 | **Contextual chunk headers** (prepend "Paper › Section" to each chunk before embedding) | 3 | Cheap, measurable recall improvement — perfect for the A/B dashboard. |
 | **HyDE and query decomposition as toggleable strategies** | 6 / 12 | Directly comparable in the evaluation framework. |
-| **Weekly digest / "what's new in my library"** | 13 | Uses clustering + recency; good dashboard insight. |
+| **Weekly digest / "what's new in my library"** | 13 | Superseded by **Research Watches** (below) — a scheduled, scored, notifying version of this idea. |
 | **Playwright E2E suite in CI** | 14 | Guards the core success criterion (upload → cited answer in minutes). |
 
 
@@ -71,13 +71,27 @@ Found by running the Research Project Builder on two papers that were not in the
 | Sentence splitter no longer breaks after "Mr.", "Dr.", "e.g.", "Fig." … | ✅ done | A suggested question was cut at "datasets such as Mr." (Mr. TyDi). |
 | Titles shortened at a word boundary | ✅ done | "…trained without label", "…CRITIQUE THROU". |
 
+## Post-launch additions (2026-10-17)
+
+| Addition | Status | Why |
+|---|---|---|
+| **Research Watches — an autonomous agent** (`services/agent/`, `/watches` API and page, in-process scheduler, notification bell) | ✅ done | The standout "the system works for you, not just when asked" feature: a saved topic is searched on arXiv on a schedule, scored by embedding similarity, and digested with a notification — no user action required. Supersedes the earlier "weekly digest" suggestion with a scheduled, scored, notifying version. |
+| **Explainable "why this matched" trace** per digest entry | ✅ done | Shows the search query, anchor text, rank and score-vs-threshold behind a match — from data the run already had. |
+| **Slack/Discord delivery** (`services/webhooks.py`, Settings → Notifications) | ✅ done | Supersedes the "deferred" webhook line below — shipped as a fixed-host allowlist (not a general outbound fetcher), one per platform per account. |
+| **Auto-synthesis**: a full literature review once a run keeps enough new papers (`synthesize`, opt-in per watch) | ✅ done | Reuses the existing Phase 11 review engine via the same `request_report` a user-initiated review calls — nothing new built for the review itself. |
+| **Public, no-login activity page** per watch (`is_public`, opt-in) | ✅ done | The first deliberately unauthenticated routes in this app; exposes only what's already public on arXiv. |
+| Email notification channel; non-arXiv sources (Semantic Scholar, etc.) for watches | deferred | Slack/Discord covers the "notify me elsewhere" need for now; email still needs an SMTP/SSRF-safe sender. V1 search stays arXiv-only, reusing the existing import's fixed-host allowlist. |
+| arXiv `all:` query phrasing (unquoted keyword-style vs. an exact phrase) | open | Shipped as unquoted `all:<query>` (closer to keyword search); not yet tuned against a range of real-world topics — worth a look once real watches have run for a while. |
+| Synthesis against a real (not fake/test) model | open | The success path is verified with the deterministic test model only, to avoid spending a real account's free-tier allowance; needs a user with a chosen model to confirm the written review's quality. |
+
 ### Status of the earlier suggestions (checked against the code)
 
 | Suggestion | Status |
 |---|---|
 | BibTeX / RIS export; reading status; contextual chunk headers; synthetic eval-set generation; Playwright E2E in CI; retrieval trace saved with every answer; in-library citation links | ✅ built in phases 3, 6, 9, 10, 13 and 15 |
 | arXiv import by URL; DOI lookup (Crossref metadata) | ✅ built 2026-10-04 (no PDF download for non-arXiv DOIs) |
-| HyDE and query decomposition · weekly digest · answer feedback (👍/👎, "wrong citation") · highlight-to-ask | not built |
+| Weekly digest / "what's new in my library" | ✅ superseded by **Research Watches**, built 2026-10-17 |
+| HyDE and query decomposition · answer feedback (👍/👎, "wrong citation") · highlight-to-ask | not built |
 
 ### Next, in the order they would help most
 

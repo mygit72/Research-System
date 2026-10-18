@@ -1,4 +1,4 @@
-import { lazy, useEffect } from 'react'
+import { Suspense, lazy, useEffect } from 'react'
 import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom'
 import { AppShell } from '@/components/layout/AppShell'
 import { LogoMark } from '@/components/ui/Logo'
@@ -35,6 +35,11 @@ const ReportsPage = lazy(() => import('@/pages/reports/ReportsPage').then((m) =>
 const ReportPage = lazy(() => import('@/pages/reports/ReportPage').then((m) => ({ default: m.ReportPage })))
 const ProjectsPage = lazy(() => import('@/pages/projects/ProjectsPage').then((m) => ({ default: m.ProjectsPage })))
 const ProjectPage = lazy(() => import('@/pages/projects/ProjectPage').then((m) => ({ default: m.ProjectPage })))
+const WatchesPage = lazy(() => import('@/pages/watches/WatchesPage').then((m) => ({ default: m.WatchesPage })))
+const WatchPage = lazy(() => import('@/pages/watches/WatchPage').then((m) => ({ default: m.WatchPage })))
+const PublicWatchPage = lazy(() =>
+  import('@/pages/watches/PublicWatchPage').then((m) => ({ default: m.PublicWatchPage })),
+)
 const EvaluationPage = lazy(() =>
   import('@/pages/evaluation/EvaluationPage').then((m) => ({ default: m.EvaluationPage })),
 )
@@ -81,6 +86,14 @@ export default function App() {
 
   return (
     <Routes>
+      <Route
+        path="/w/:id"
+        element={
+          <Suspense fallback={<SplashScreen />}>
+            <PublicWatchPage />
+          </Suspense>
+        }
+      />
       <Route element={<GuestOnly />}>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
@@ -99,6 +112,8 @@ export default function App() {
           <Route path="/notes" element={<NotesPage />} />
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/projects/:id" element={<ProjectPage />} />
+          <Route path="/watches" element={<WatchesPage />} />
+          <Route path="/watches/:id" element={<WatchPage />} />
           <Route path="/reviews" element={<ReportsPage />} />
           <Route path="/reviews/:id" element={<ReportPage />} />
           <Route path="/graph" element={<KnowledgePage />} />

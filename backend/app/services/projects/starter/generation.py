@@ -58,7 +58,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).parent
-PROMPT_VERSION = "qa-v2"  # a label for the prompts below; the cache key holds the full text anyway
+PROMPT_VERSION = "qa-v3"  # a label for the prompts below; the cache key holds the full text anyway
 ABSTAIN = "unanswerable"  # metrics.ABSTAIN
 PASSAGE_WORDS = 200  # each passage is cut to this many words in the prompt (said in the prompt log)
 RETRIES = 2  # extra attempts after a busy-server error
@@ -73,7 +73,9 @@ DEFAULTS: dict[str, dict[str, Any]] = {
 SYSTEM_RAG = (
     "Answer the question using only the numbered passages. Reply with the answer alone: a few "
     "words, no full sentence, no explanation, no passage numbers. If the passages do not contain "
-    f"the answer, reply exactly: {ABSTAIN}"
+    "the answer, reply exactly: "
+    f"{ABSTAIN}. A passage may state an answer as a definition or paraphrase the question; "
+    "use that relevant information instead of abstaining."
 )
 SYSTEM_CLOSED_BOOK = (
     "Answer the question. Reply with the answer alone: a few words, no full sentence, no "

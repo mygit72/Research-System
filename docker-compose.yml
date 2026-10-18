@@ -66,14 +66,45 @@ services:
       - path: .env
         required: false
     build: { context: ., dockerfile: infra/docker/backend.Dockerfile }
-    environment: *backend-env
+    environment:
+      <<: *backend-env
+      PROJECT_RUNNER_URL: http://project-runner:8081
+      PROJECT_RUNNER_TOKEN: ${PROJECT_RUNNER_TOKEN:-local-development-runner-token-change-me}
     volumes: [file-storage:/app/data, model-cache:/app/models]
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
       qdrant: { condition: service_started }
+      project-runner: { condition: service_healthy }
     extra_hosts: ["host.docker.internal:host-gateway"]  # reach Ollama on the host (Linux)
     ports: ["8000:8000"]
+
+  # Receives code only from the API. It launches each run in a disposable container with no
+  # network, a read-only root filesystem, dropped capabilities and fixed CPU/memory/time limits.
+  # The Docker socket is available only to this internal runner manager, never to the API or run.
+  project-runner:
+    build: { context: ., dockerfile: infra/docker/project-runner.Dockerfile }
+    image: research-project-runner:local
+    environment:
+      RUNNER_TOKEN: ${PROJECT_RUNNER_TOKEN:-local-development-runner-token-change-me}
+      RUNNER_IMAGE: research-project-runner:local
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 1.0
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=16m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
 
   worker:
     env_file: *backend-env-file

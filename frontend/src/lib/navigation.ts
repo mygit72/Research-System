@@ -12,6 +12,7 @@ import {
   MessagesSquare,
   Network,
   NotebookPen,
+  Radar,
   Search,
   Settings,
   type LucideIcon,
@@ -73,6 +74,12 @@ export const primaryNav: NavItem[] = [
     to: '/projects',
     icon: Lightbulb,
     description: 'Plan a project from an idea: questions, background, gaps, methods and a paper outline',
+  },
+  {
+    label: 'Watches',
+    to: '/watches',
+    icon: Radar,
+    description: "Monitor arXiv for new papers on a topic — found while you're away",
   },
   {
     label: 'Knowledge Graph',

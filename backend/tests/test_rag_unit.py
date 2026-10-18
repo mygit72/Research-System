@@ -17,7 +17,7 @@ from app.services.llm.ollama import OllamaProvider
 from app.services.llm.openai_compat import OpenAICompatibleProvider
 from app.services.rag.citations import split_claims, validate_citations
 from app.services.rag.context import select_context
-from app.services.rag.prompt import build_messages
+from app.services.rag.prompt import build_messages, is_build_request, is_gpt_build_request
 from app.services.rag.query import analyze_query
 from app.services.rag.verify import LexicalVerifier, summarize, verify_claims
 from app.services.retrieval.service import PassageResult
@@ -81,12 +81,22 @@ def test_entities_and_follow_ups() -> None:
         ("What is the main contribution of this paper?", True),
         ("What limitations do the authors mention?", True),
         ("Which datasets are used?", True),
+        ("Why does Equation 2 divide the attention scores by the square root of d_k?", True),
+        ("What does Figure 3 show?", True),
+        ("Define BLEU in the context of the evaluation.", True),
+        ("What is tanh?", True),
+        ("Which experiments support the main claim?", True),
         ("Who won the 1998 football world cup final?", False),
         ("What is the boiling point of water?", False),
     ],
 )
 def test_questions_about_the_paper_itself_are_recognized(question: str, about: bool) -> None:
     assert analyze_query(question).about_the_paper is about
+
+
+def test_short_technical_definition_is_classified_as_a_concept_question() -> None:
+    analysis = analyze_query("What is tanh?")
+    assert analysis.intent == "concept_explanation" and analysis.about_the_paper
 
 
 # --- citations --------------------------------------------------------------------------------
@@ -237,12 +247,54 @@ async def test_fake_llm_answers_only_from_evidence_with_citations() -> None:
     assert answer == INSUFFICIENT
 
 
+def test_paper_chat_prompt_teaches_equations_figures_and_reproduction() -> None:
+    evidence = [SimpleNamespace(number=1, result=_result("The method uses scaled dot-product attention.", 1))]
+    messages = build_messages(
+        "Explain Equation 1 and how to reproduce the method.", evidence, [], paper_chat=True
+    )  # type: ignore[arg-type]
+    assert "one selected paper for context" in messages[0].content
+    assert "name each symbol" in messages[0].content
+    assert "missing details separately" in messages[0].content
+    assert "provide a concrete first version now" in messages[0].content
+    assert "Do not refuse because a task is complex" in messages[0].content
+
+
+def test_general_chat_prompt_continues_build_requests_from_history() -> None:
+    messages = build_messages(
+        "Help me build it then",
+        [],
+        [("How to build GPT from scratch", "Start with data, architecture, and training.")],
+    )
+    assert messages[1].content == "How to build GPT from scratch"
+    assert messages[2].content == "Start with data, architecture, and training."
+    assert "continue from the project just discussed" in messages[0].content
+    assert "include complete code" in messages[0].content
+    assert "decoder-only causal transformer" in messages[0].content
+    assert "first small, runnable version" in messages[-1].content
+    assert "CausalSelfAttention" in messages[-1].content
+    assert "Do not use nn.LSTM" in messages[-1].content
+    assert "self.position_embedding = nn.Embedding(...)" in messages[-1].content
+    assert "x = tokens[:, :-1] and y = tokens[:, 1:]" in messages[-1].content
+    assert "if any is missing, fix the code" in messages[-1].content
+
+
+def test_vague_build_follow_up_uses_the_previous_topic() -> None:
+    history = [("How to build GPT from scratch", "Start with a tiny decoder-only model.")]
+    assert is_build_request("Can you help me finish it?", history)
+    assert is_build_request("Help me build it then", history)
+    assert not is_build_request("What is attention?", history)
+    assert not is_build_request("Help me build a weekly routine", [])
+    assert is_gpt_build_request("Help me build it then", history)
+
+
 # --- providers --------------------------------------------------------------------------------
 
 
-async def _collect(provider: Any) -> tuple[str, Any]:
+async def _collect(provider: Any, params: GenerationParams | None = None) -> tuple[str, Any]:
     text, final = "", None
-    async for event in provider.stream([Message("user", "hi")], GenerationParams(50, 0.0)):
+    async for event in provider.stream(
+        [Message("user", "hi")], params or GenerationParams(50, 0.0)
+    ):
         text += event.text
         final = event if event.done else final
     return text, final
@@ -253,7 +305,10 @@ async def test_ollama_streams_ndjson_and_reports_missing_models() -> None:
         body = json.loads(request.content)
         if body["model"] == "missing":
             return httpx.Response(404, json={"error": "model not found"})
-        assert body["options"] == {"temperature": 0.0, "num_predict": 50}
+        expected = {"temperature": 0.0, "num_predict": 50}
+        if "num_ctx" in body["options"]:
+            expected["num_ctx"] = 8192
+        assert body["options"] == expected
         lines = [
             {"message": {"content": "Hello"}, "done": False},
             {"message": {"content": " world"}, "done": False},
@@ -264,6 +319,11 @@ async def test_ollama_streams_ndjson_and_reports_missing_models() -> None:
     transport = httpx.MockTransport(handler)
     text, final = await _collect(OllamaProvider("qwen2.5:3b", transport=transport))
     assert text == "Hello world" and (final.usage.input_tokens, final.usage.output_tokens) == (7, 2)
+    text, _ = await _collect(
+        OllamaProvider("qwen2.5:3b", transport=transport),
+        GenerationParams(50, 0.0, context_window=8192),
+    )
+    assert text == "Hello world"
     with pytest.raises(LLMError, match="isn't installed") as error:
         await _collect(OllamaProvider("missing", transport=transport))
     assert "ollama pull missing" in (error.value.detail or "")

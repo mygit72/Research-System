@@ -1,0 +1,71 @@
+﻿python.exe : [transformers] Token indices sequence length is longer than the specified maximum sequence length for 
+this model (546 > 512). Running this sequence through the model will result in indexing errors
+At line:2 char:1
++ & ".\backend\.venv\Scripts\python.exe" "eval\beir\run_benchmark.py" 2 ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([transformers] ...indexing errors:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits 
+and faster downloads.
+[download] scifact already present at C:\Projects my\research system\eval\beir\data\scifact
+[data] 5183 corpus docs, 300 test queries, 339 qrel judgments
+[config] embedding_model=BAAI/bge-small-en-v1.5 reranker_model=cross-encoder/ms-marco-MiniLM-L-6-v2 chunking_strategy=section_aware chunk_size=384 bm25(k1=1.2,b=0.75) rrf_k=60
+[chunk] 6572 chunks from 5183 docs in 15.9s (1296 docs split into >1 chunk, max 6 chunks/doc)
+[bm25] indexed 6572 passages in 2.0s
+
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]
+Loading weights: 100%|██████████| 199/199 [00:00<00:00, 3965.48it/s]
+2026-10-18 19:32:15 [info     ] model_loaded                   model=embed:BAAI/bge-small-en-v1.5:cpu:float32 seconds=4.43
+[dense] embedded + indexed 6572 passages in 424.6s -> collection eval_beir_chunks__baai-bge-small-en-v1-5__384
+
+Loading weights:   0%|          | 0/105 [00:00<?, ?it/s]
+Loading weights: 100%|██████████| 105/105 [00:00<00:00, 3901.92it/s]
+2026-10-18 19:39:20 [info     ] model_loaded                   model=rerank:cross-encoder/ms-marco-MiniLM-L-6-v2:cpu:float32 seconds=4.52
+[eval] 50/300 queries
+[eval] 100/300 queries
+[eval] 150/300 queries
+[eval] 200/300 queries
+[eval] 250/300 queries
+[eval] 300/300 queries
+
+[done] wrote C:\Projects my\research system\eval\beir\results\results.json and C:\Projects my\research system\eval\beir\results\results.md
+{
+  "BM25 only": {
+    "nDCG@10": 0.6766,
+    "Recall@10": 0.8134,
+    "Recall@100": 0.9082,
+    "MRR@10": 0.6399,
+    "n_queries": 300
+  },
+  "Dense only": {
+    "nDCG@10": 0.7097,
+    "Recall@10": 0.8312,
+    "Recall@100": 0.9433,
+    "MRR@10": 0.6774,
+    "n_queries": 300
+  },
+  "Hybrid (RRF)": {
+    "nDCG@10": 0.717,
+    "Recall@10": 0.8279,
+    "Recall@100": 0.965,
+    "MRR@10": 0.685,
+    "n_queries": 300
+  },
+  "Hybrid + rerank": {
+    "nDCG@10": 0.6995,
+    "Recall@10": 0.8207,
+    "Recall@100": 0.965,
+    "MRR@10": 0.6701,
+    "n_queries": 300
+  }
+}
+Exception ignored in: <function QdrantClient.__del__ at 0x0000020555B1A700>
+Traceback (most recent call last):
+  File "C:\Projects my\research system\backend\.venv\Lib\site-packages\qdrant_client\qdrant_client.py", line 169, in 
+__del__
+  File "C:\Projects my\research system\backend\.venv\Lib\site-packages\qdrant_client\qdrant_client.py", line 178, in 
+close
+  File "C:\Projects my\research system\backend\.venv\Lib\site-packages\qdrant_client\local\qdrant_local.py", line 109, 
+in close
+ImportError: sys.meta_path is None, Python is likely shutting down

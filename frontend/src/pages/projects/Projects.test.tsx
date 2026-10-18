@@ -59,6 +59,7 @@ const project = (over: Partial<Project> = {}): Project => ({
     },
     experiments: { items: [], milestones: [], deadline: null },
     outline: { status: 'idle', sections: [], sources: [], error: null },
+    code: { status: 'idle', drafts: {}, note: null, error: null },
   },
   ...over,
 }) // fmt: skip
@@ -74,6 +75,44 @@ describe('ProjectsPage', () => {
     await userEvent.type(screen.getByRole('textbox', { name: 'Your idea' }), 'Adapt generators to retrievers')
     await userEvent.click(start)
     expect(create).toHaveBeenCalledWith({ idea: 'Adapt generators to retrievers', collection_id: null })
+    expect(await screen.findByText('Opened project')).toBeInTheDocument()
+  })
+
+  it('starts a paper-scoped project with the source paper attached', async () => {
+    vi.spyOn(projectsApi, 'list').mockResolvedValue([])
+    vi.spyOn(collectionsApi, 'list').mockResolvedValue([])
+    const createCollection = vi.spyOn(collectionsApi, 'create').mockResolvedValue({
+      id: 'paper-collection',
+      name: 'Research: Attention Is All You Need',
+      description: '',
+      kind: 'project',
+      paper_count: 1,
+      note_count: 0,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    const createProject = vi.spyOn(projectsApi, 'create').mockResolvedValue(project())
+    const idea = 'Build on Attention Is All You Need with a small, testable extension.'
+    render(
+      wrap(
+        <ProjectsPage />,
+        `/projects?paper_id=paper-1&paper_title=${encodeURIComponent('Attention Is All You Need')}&idea=${encodeURIComponent(idea)}`,
+        '/projects',
+      ),
+    )
+    expect(await screen.findByText(/Starting paper:/)).toHaveTextContent('Attention Is All You Need')
+    expect(screen.getByRole('textbox', { name: 'Your idea' })).toHaveValue(idea)
+    await userEvent.click(screen.getByRole('button', { name: /Start project/ }))
+    expect(createCollection).toHaveBeenCalledWith({
+      name: 'Research: Attention Is All You Need',
+      description: expect.stringContaining('Attention Is All You Need'),
+      kind: 'project',
+      document_ids: ['paper-1'],
+    })
+    expect(createProject).toHaveBeenCalledWith({
+      idea,
+      collection_id: 'paper-collection',
+    })
     expect(await screen.findByText('Opened project')).toBeInTheDocument()
   })
 })

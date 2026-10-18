@@ -3,6 +3,8 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { TooltipProvider } from '@/components/ui/Tooltip'
+import { MemoryRouter } from 'react-router-dom'
 import { projectsApi } from '@/services/api'
 import type { Project, StepGuide } from '@/types/api'
 import { StarterCodeStep } from './StarterCode'
@@ -11,7 +13,13 @@ import { StepGuidePanel } from './StepGuide'
 afterEach(() => vi.restoreAllMocks())
 
 const wrap = (children: ReactNode) => (
-  <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{children}</QueryClientProvider>
+  <TooltipProvider>
+    <MemoryRouter>
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        {children}
+      </QueryClientProvider>
+    </MemoryRouter>
+  </TooltipProvider>
 )
 
 const guide: StepGuide = {
@@ -68,10 +76,15 @@ describe('StarterCodeStep', () => {
     { path: 'README.md', purpose: 'The walkthrough.', content: '# Starter\nRun the smoke test first.' },
     { path: 'systems.py', purpose: 'The systems compared.', content: 'class YourApproach: ...' },
   ]
-  const project = { id: 'p1', title: 'My project', updated_at: 'u1' } as Project
+  const project = {
+    id: 'p1',
+    title: 'My project',
+    updated_at: 'u1',
+    steps: { code: { status: 'idle', drafts: {}, note: null, error: null } },
+  } as Project
 
   it('lists every file with its purpose and shows the one you pick', async () => {
-    vi.spyOn(projectsApi, 'code').mockResolvedValue({ files })
+    vi.spyOn(projectsApi, 'code').mockResolvedValue({ files, runs: [] })
     render(wrap(<StarterCodeStep project={project} />))
     const list = await screen.findByRole('list', { name: 'Files' })
     expect(within(list).getByText('The walkthrough.')).toBeInTheDocument()
@@ -81,7 +94,7 @@ describe('StarterCodeStep', () => {
   })
 
   it('copies the open file and downloads the zip', async () => {
-    vi.spyOn(projectsApi, 'code').mockResolvedValue({ files })
+    vi.spyOn(projectsApi, 'code').mockResolvedValue({ files, runs: [] })
     const exportCode = vi.spyOn(projectsApi, 'export').mockResolvedValue(new Blob(['zip']))
     URL.createObjectURL = vi.fn(() => 'blob:x')
     URL.revokeObjectURL = vi.fn()
@@ -94,5 +107,50 @@ describe('StarterCodeStep', () => {
     expect(await screen.findByText('Copied')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: /Download \.zip/ }))
     expect(exportCode).toHaveBeenCalledWith('p1', 'code')
+  })
+
+  it('keeps an uncited model draft visible with its supplied paper passages', async () => {
+    const source = {
+      number: 1,
+      chunk_id: 'chunk-1',
+      document: { id: 'paper-1', title: 'Attention Is All You Need', year: 2017 },
+      section_title: 'Scaled Dot-Product Attention',
+      page_start: 4,
+      page_end: 4,
+      char_start: 0,
+      boxes: [],
+      quote: 'The dot products are scaled before softmax.',
+    }
+    const draftProject = {
+      ...project,
+      idea: 'Study scaled attention',
+      question: 'How does scaling affect the weights?',
+      hypothesis: 'Scaling reduces saturation.',
+      steps: {
+        ...project.steps,
+        code: {
+          status: 'ready',
+          drafts: {
+            model: {
+              status: 'drafted',
+              code: 'class ResearchModel:\n    def forward(self, values):\n        return values\n',
+              sources: [source],
+              note: 'The model omitted inline passage comments; review the supplied paper passages beside the code.',
+            },
+          },
+          note: null,
+          error: null,
+        },
+      },
+    } as Project
+    vi.spyOn(projectsApi, 'code').mockResolvedValue({
+      files: [...files, { path: 'model.py', purpose: 'The generated model.', content: 'class ResearchModel: ...' }],
+      runs: [],
+    })
+    render(wrap(<StarterCodeStep project={draftProject} />))
+
+    expect(await screen.findByText(/omitted inline passage comments/)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Paper evidence for this draft' })).toBeInTheDocument()
+    expect(screen.getByText('Attention Is All You Need')).toBeInTheDocument()
   })
 })

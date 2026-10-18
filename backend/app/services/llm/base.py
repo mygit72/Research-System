@@ -19,6 +19,7 @@ class Message:
 class GenerationParams:
     max_tokens: int = 700
     temperature: float = 0.1
+    context_window: int | None = None
 
 
 @dataclass(slots=True)

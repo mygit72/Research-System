@@ -138,7 +138,7 @@ function ModelBanner() {
           </Link>
         )}
         <p className="mt-0.5 text-caption text-muted">
-          Search still works, and questions with no matching evidence are answered without the model.
+          Search works without a model. Choose one to get chat answers and paper explanations.
         </p>
       </div>
     </div>
@@ -153,7 +153,9 @@ export function ChatPanel({
   onOpen,
   emptyState,
   suggestions,
-  placeholder = 'Ask a question about your papers…',
+  placeholder = 'Ask anything…',
+  initialQuestion,
+  initialQuestionKey,
   compact,
 }: {
   conversationId: string | null
@@ -163,11 +165,16 @@ export function ChatPanel({
   emptyState: { title: string; description: string }
   suggestions: string[]
   placeholder?: string
+  /** A one-shot prompt supplied by a paper action, such as explaining a selected passage. */
+  initialQuestion?: string | null
+  initialQuestionKey?: string | number
   compact?: boolean
 }) {
   const chat = useChatSession({ conversationId, documentIds, onCreated })
+  const { ask: sendChat, busy: chatBusy } = chat
   const scroller = useRef<HTMLDivElement>(null)
   const pinned = useRef(true) // follow new text while the reader is at the bottom
+  const sentInitialQuestion = useRef<string | null>(null)
 
   const liveText = chat.live?.text
   const count = chat.messages.length
@@ -180,6 +187,15 @@ export function ChatPanel({
     pinned.current = true
     void chat.ask(text, { fresh })
   }
+
+  useEffect(() => {
+    const question = initialQuestion?.trim()
+    const key = String(initialQuestionKey ?? question ?? '')
+    if (!question || sentInitialQuestion.current === key || chatBusy) return
+    sentInitialQuestion.current = key
+    pinned.current = true
+    void sendChat(question)
+  }, [initialQuestion, initialQuestionKey, sendChat, chatBusy])
 
   const empty = !chat.live && count === 0
   const loading = !!conversationId && chat.detail.isPending && !chat.live
@@ -259,7 +275,7 @@ export function ChatPanel({
           <ModelBanner />
           <Composer onSend={ask} onStop={chat.stop} busy={chat.busy} placeholder={placeholder} autoFocus={!compact} />
           <p className="mt-1.5 text-center text-caption text-subtle">
-            Answers come only from your indexed papers. Check the sources before relying on them.
+            Ask about anything. Paper-specific claims cite sources; general background is labeled separately.
           </p>
         </div>
       </div>

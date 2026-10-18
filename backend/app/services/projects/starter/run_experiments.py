@@ -14,6 +14,8 @@ A system or metric that isn't implemented yet gets a row with status "todo" and 
 never a number; a language model that can't be reached gets a row with status "error" and the
 fix (answers generated so far are cached: rerun to continue). Predictions — with the passages
 each answer was made from — go to results/predictions_<experiment>.jsonl for error analysis.
+The JSONL includes references, per-example metric scores and short passage excerpts; import it
+into the project's Failure Explorer to inspect difficult questions across systems.
 """
 
 from __future__ import annotations
@@ -42,18 +44,40 @@ def evaluate(system: systems.System, examples: list[data.Example], metric_list: 
     predictions = []
     families = {m.family for m in metric_list}
     missing: dict[str, str] = {}
-    for ex in examples:
-        record: dict = {"question": ex["question"]}
+    for example_id, ex in enumerate(examples):
+        passages = ex.get("passages", [])
+        relevant = set(ex.get("relevant", []))
+        record: dict = {
+            "example_id": str(example_id),
+            "question": ex["question"],
+            "reference_answers": list(ex.get("answers", []))[:10],
+            "reference_passages": [
+                {"index": index, "text": passages[index][:600]}
+                for index in sorted(relevant)[:3]
+                if isinstance(index, int) and 0 <= index < len(passages)
+            ],
+            "metric_scores": {},
+        }
         ranking = answer = evidence = None
         if "retrieval" in families:
             ranking = system.rank(ex, seed)  # None: this system doesn't retrieve (closed-book)
             record["ranking"] = ranking
+            record["retrieved_passages"] = [
+                {"index": index, "relevant": index in relevant, "text": passages[index][:600]}
+                for index in ranking[:3]
+                if isinstance(index, int) and 0 <= index < len(passages)
+            ] if ranking is not None else []
         if families & {"answer", "grounded"}:
             answer = system.answer(ex, seed)
             record["answer"] = answer
         if families & {"grounded", "evidence"}:
             evidence = system.evidence(ex, seed)  # None: the system doesn't say
             record["evidence"] = evidence
+            record["used_passages"] = [
+                {"index": index, "text": passages[index][:600]}
+                for index in (evidence or [])[:3]
+                if isinstance(index, int) and 0 <= index < len(passages)
+            ] if evidence is not None else []
         for m in metric_list:
             if m.family == "retrieval":
                 if ranking is None:
@@ -61,7 +85,9 @@ def evaluate(system: systems.System, examples: list[data.Example], metric_list: 
                         f"{system.label} doesn't retrieve, so {m.label} doesn't apply."
                     )
                 else:
-                    scores[m.label].append(m.compute(ranking, ex["relevant"]))
+                    score = m.compute(ranking, ex["relevant"])
+                    scores[m.label].append(score)
+                    record["metric_scores"][m.label] = round(float(score), 6)
             elif m.family == "grounded":
                 if evidence is None:
                     missing[m.label] = (
@@ -69,7 +95,9 @@ def evaluate(system: systems.System, examples: list[data.Example], metric_list: 
                         "an evidence() method in systems.py."
                     )
                 elif evidence:  # closed-book: nothing to be grounded in, not a 0
-                    scores[m.label].append(m.compute(answer, [ex["passages"][i] for i in evidence]))
+                    score = m.compute(answer, [ex["passages"][i] for i in evidence])
+                    scores[m.label].append(score)
+                    record["metric_scores"][m.label] = round(float(score), 6)
             elif m.family == "evidence":
                 if evidence is None:
                     missing[m.label] = (
@@ -77,9 +105,13 @@ def evaluate(system: systems.System, examples: list[data.Example], metric_list: 
                         "evidence() method in systems.py."
                     )
                 else:
-                    scores[m.label].append(m.compute(evidence))
+                    score = m.compute(evidence)
+                    scores[m.label].append(score)
+                    record["metric_scores"][m.label] = round(float(score), 6)
             elif ex["answers"]:  # no accepted answer: nothing to compare with, not a 0
-                scores[m.label].append(m.compute(answer, ex["answers"]))
+                score = m.compute(answer, ex["answers"])
+                scores[m.label].append(score)
+                record["metric_scores"][m.label] = round(float(score), 6)
         predictions.append(record)
     for m in metric_list:
         if m.label not in scores:
@@ -93,14 +125,38 @@ def evaluate(system: systems.System, examples: list[data.Example], metric_list: 
 
 
 def run(
-    config: dict, smoke: bool, only: str | None, limit: int | None, estimate: bool = False
+    config: dict,
+    smoke: bool,
+    only: str | None,
+    limit: int | None,
+    estimate: bool = False,
+    toy: bool = False,
 ) -> list[dict]:
     rows: list[dict] = []
     out = ROOT / "results"
     out.mkdir(exist_ok=True)
-    seeds = config["seeds"]
+    # A server-side toy run exercises the project's own systems on fixed offline data, but keeps
+    # the run bounded to one seed and one main experiment.
+    seeds = [0] if toy else config["seeds"]
     experiments = config["experiments"]
-    if smoke:
+    if toy:
+        main = next((e for e in experiments if e["kind"] == "main"), None)
+        main = main or {
+            "key": "toy",
+            "kind": "main",
+            "title": "Toy experiment",
+            "systems": [],
+            "metrics": config["metrics"],
+            "how": "",
+        }
+        experiments = [
+            {
+                **main,
+                "dataset": "toy",
+                "metrics": main.get("metrics") or config["metrics"],
+            }
+        ]
+    elif smoke:
         # The pipeline is the same for every experiment: run it once, on toy data, whatever
         # the plan says (even if it has no experiments yet), with retrieval metrics included
         # so the check is meaningful.
@@ -173,7 +229,18 @@ def run(
                 path = out / f"predictions_{exp['key']}.jsonl"
                 with path.open("a", encoding="utf-8") as handle:
                     for p in predictions:
-                        handle.write(json.dumps({"system": name, "seed": seed, **p}) + "\n")
+                        handle.write(
+                            json.dumps(
+                                {
+                                    "experiment": exp["key"],
+                                    "dataset": dataset,
+                                    "system": name,
+                                    "seed": seed,
+                                    **p,
+                                }
+                            )
+                            + "\n"
+                        )
         for name, note in todo_metrics:
             rows.append({**base, "system": "-", "seed": "-", "metric": name, "value": "",
                          "status": "todo", "note": note})  # fmt: skip
@@ -211,6 +278,11 @@ def main() -> None:
         description=__doc__, formatter_class=argparse.RawTextHelpFormatter
     )
     parser.add_argument("--smoke", action="store_true", help="toy data and sanity systems only")
+    parser.add_argument(
+        "--toy",
+        action="store_true",
+        help="run the main experiment and project systems on built-in toy data, one seed",
+    )
     parser.add_argument("--only", help="run one experiment key, e.g. main-1")
     parser.add_argument("--limit", type=int, help="use at most this many examples")
     parser.add_argument(
@@ -219,10 +291,12 @@ def main() -> None:
         help="count the model calls and prompt tokens a run needs, without calling the model",
     )
     args = parser.parse_args()
+    if args.smoke and args.toy:
+        parser.error("choose either --smoke or --toy")
     config = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
     if args.estimate:
         generation.Generator.estimate_only = True
-        run(config, args.smoke, args.only, args.limit, estimate=True)
+        run(config, args.smoke, args.only, args.limit, estimate=True, toy=args.toy)
         calls, tokens = generation.estimate_totals()
         print(
             f"\nEstimate: {calls} model call(s) not in the cache, ~{tokens} prompt tokens (about "
@@ -233,7 +307,7 @@ def main() -> None:
         return
     for stale in (ROOT / "results").glob("predictions_*.jsonl"):
         stale.unlink()
-    rows = run(config, args.smoke, args.only, args.limit)
+    rows = run(config, args.smoke, args.only, args.limit, toy=args.toy)
     (ROOT / "results").mkdir(exist_ok=True)
     with (ROOT / "results" / "results.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=FIELDS)

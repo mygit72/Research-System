@@ -42,7 +42,7 @@ flowchart TD
     DN --> RRF
     RRF --> RR[Cross-encoder reranker<br/>top 50–100 → top 10–20]
     RR --> CS[Context selection<br/>dedupe · MMR diversity · token budget]
-    CS --> LLM[LLM generation<br/>evidence-only prompt, numbered sources]
+    CS --> LLM[LLM generation<br/>general answers + cited paper context]
     LLM --> CV[Citation validator + claim verification]
     CV --> RESP[Streamed answer + citations + support status]
 ```
@@ -80,6 +80,10 @@ flowchart TD
 | Workers | `backend/app/workers/` | Job registry, runner, dispatchers (inline or Celery). |
 | Core | `backend/app/core/` | Config, logging, DB engine, security, metrics, rate limiting, errors. |
 | AI providers | `backend/app/services/embeddings/` ✅ (Phase 3), `generation/`, `reranking/` (planned) | One interface per capability; implementations are swappable by config. `services/models/manager.py` owns local model lifecycle (device/dtype, lazy load, LRU + idle unload). |
+| Autonomous agents | `backend/app/services/agent/` | Research Watches: CRUD, relevance scoring (embedding cosine similarity against a topic/project anchor), run orchestration (search → score → import → synthesize → notify). See §7. |
+| Notifications | `backend/app/services/notifications.py` | In-app notifications (today: Research Watch digests only). |
+| Webhook delivery | `backend/app/services/webhooks.py`, `services/notification_channels.py` | Slack/Discord delivery for a watch's digest notification, one per platform per account; fixed-host allowlist (never a general outbound fetcher). |
+| Public (no login) views | `backend/app/api/routes/public.py` | The one deliberately unauthenticated surface: a watch's owner can mark it `is_public`, exposing only what's already public on arXiv. |
 | Frontend | `frontend/src/` | Pages, design-system components, typed API client, stores. No business logic in components. |
 
 ### Provider abstraction (planned, Phases 2–6)
@@ -285,17 +289,25 @@ REST under `/api/v1`, OpenAPI at `/docs`. Errors always have the shape
 8. **Context selection** ✅ (`rag/context.py`) — reranker-probability floor
    (`CONTEXT_MIN_RELEVANCE`), near-duplicate removal (Jaccard ≥ 0.8), MMR (λ = 0.7) for
    diversity, token-budget packing (`CONTEXT_TOKEN_BUDGET`, `CONTEXT_MAX_PASSAGES`). Every
-   keep/drop decision and its reason is stored in the trace. With no passage left, the answer
-   is *"I couldn't find sufficient evidence in the indexed papers."* and the LLM is not called.
+   keep/drop decision and its reason is stored in the trace. With no passage left in any chat scope,
+   the model still answers general questions using general knowledge, labeled as not grounded in
+   the indexed papers or selected paper. When the user asks what a paper says and no passage supports
+   it, the model reports that gap instead of inventing paper details.
    In a single paper's chat, a question about the paper itself ("what is the main
    contribution?") that the reranker scores ~0 everywhere is ranked by BM25 + dense instead
    (measured: MiniLM gives ≤ 0.002 to every passage for such questions).
 9. **Generation** ✅ (`rag/prompt.py`, `services/llm/`) — numbered evidence blocks
-   (`[n] Title (Year) — Section, p. N`), instructions to cite `[n]` for every claim, the last
+   (`[n] Title (Year) — Section, p. N`), citations for paper-specific claims, a general-knowledge
+   fallback for any topic, the last
    `CHAT_HISTORY_TURNS` turns, streamed over SSE. Providers behind `LLMProvider`: Ollama
    (default, `qwen2.5:3b` fits next to the other models on an 8 GB CPU machine), any
    OpenAI-compatible API (vLLM, LM Studio, OpenAI, OpenRouter, NVIDIA), and a
    deterministic extractive model for tests. Remote providers are refused in `LOCAL_ONLY`.
+   An optional `CODE_LLM_MODEL` routes software requests to a dedicated local Ollama coder without
+   overriding a hosted model choice. Python code drafts receive static syntax checks; GPT drafts
+   also receive architecture/next-token checks and up to two repair attempts. Ollama code requests use
+   `CODE_LLM_CONTEXT_WINDOW` (default 8192), separate from ordinary-chat context. Generated code
+   is not run by the API process.
 10. **Citation validation** ✅ (`rag/citations.py`) — `[1]`, `[1, 3]`, `[2-4]` are parsed;
     numbers with no passage are removed from the answer and reported (never a link to a
     fabricated page).
@@ -444,7 +456,60 @@ were found" panel.
 
 ---
 
-## 7. Bottlenecks and how they're handled
+## 7. Autonomous agents: Research Watches
+
+A watch (saved topic, optionally linked to a Collection and/or a Research Project) is checked on
+a schedule or on "Run now", with no action from the user required:
+
+```mermaid
+flowchart LR
+    S[Scheduler loop, in-process] -->|due watches, optimistic UPDATE| J[Job: agent.run_watch]
+    J --> A[arXiv search since last_searched_at]
+    A --> E[Embed candidate abstracts]
+    E --> C[Cosine score vs topic + project anchor]
+    C -->|>= threshold, capped| D[Digest entries, each with a trace]
+    D -->|auto_import| I[DocumentService.import_arxiv]
+    I --> COL[Attach to collection]
+    D --> N[Notification]
+    N --> B[Notification bell]
+    N --> W[Slack / Discord, if configured]
+    D -->|synthesize, enough kept| SYN[Import + wait for processing]
+    SYN --> REV[request_report: a real literature review]
+    D -->|is_public| PUB[/public/watches/:id, no login/]
+```
+
+- **No Celery beat.** The schedule is an in-process asyncio loop started from `main.py`'s
+  `lifespan` (`workers/scheduler.py`), the same shape as the existing model-warmup background
+  task. This is the one path that works identically whether jobs run inline (dev/SQLite, no
+  separate worker process) or via Celery (Docker): either way, the API process can still write a
+  `Job` row and ask the dispatcher to pick it up.
+- **Claiming a due watch** uses an optimistic conditional `UPDATE ... WHERE next_run_at <= :now`
+  (checking the row count), not `SELECT ... FOR UPDATE` — this keeps the scheduler SQLite-safe
+  (this codebase's dual-DB support) and is still race-safe if the deployment ever runs more than
+  one backend process.
+- **Review queue by default.** `auto_import` is off by default: new papers land in a digest for
+  the user to add by hand. This is a deliberate restraint choice, not a missing feature.
+- **A background job must dispatch its own follow-on jobs.** `agent.run_watch` runs outside a
+  request, so nothing calls `run_after_commit` for it automatically (the `DbSession` FastAPI
+  dependency does that after an ordinary request). The run's write phase (`services/agent/runner.py`)
+  calls it explicitly after its own commit — otherwise an auto-imported paper's `document.process`
+  job would be registered but never dispatched.
+- **A watch's "why this matched" trace** (search query, anchor text, rank among that run's
+  candidates, score vs. threshold) is stored on `AgentDigestEntry.trace` from data the run already
+  has in hand while scoring — no extra computation, just not thrown away.
+- **Synthesis doesn't block on the review finishing.** When a watch has `synthesize` on and a run
+  keeps enough candidates, the run imports them (even if `auto_import` is off — reading them is
+  the point), waits for them to finish processing, then calls the *same* `request_report` function
+  `POST /literature-review` uses and stores the resulting `report_id` on the run. The review itself
+  runs as its own `report.generate` job and is read on the existing `/reviews/{id}` page — nothing
+  new was built for that part. The run's own status stays `running` until this entire sequence is
+  done, not just the digest-building part, so a client polling the run can't mistake a still-waiting
+  synthesis for a finished run.
+- **Public watches reuse the "unguessable UUID" trust model** signed asset URLs already use,
+  rather than a separate secret token: `is_public` just gates whether the public endpoints
+  (`api/routes/public.py`, no `CurrentUser` on any route) will serve that watch's id.
+
+## 8. Bottlenecks and how they're handled
 
 | Bottleneck | Mitigation |
 |---|---|
@@ -457,7 +522,7 @@ were found" panel.
 | GPU memory on consumer hardware | Lazy load, LRU unload, fp16/int8 options, never co-load LLM + reranker unless memory allows. |
 | DB hot paths | Composite indexes on `(user_id, …)`, pagination everywhere, no N+1 (selectinload). |
 
-## 8. Technical risks
+## 9. Technical risks
 
 | Risk | Impact | Mitigation |
 |---|---|---|

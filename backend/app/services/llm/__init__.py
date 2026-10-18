@@ -8,6 +8,7 @@ picked the free model, their own key or their own copy of the app, no model is i
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -93,6 +94,64 @@ def get_llm(settings: Settings, usage: UsageScope | None = None) -> LLMProvider:
     from app.services.usage import MeteredLLM
 
     return MeteredLLM(_provider(settings), settings, usage)
+
+
+def _local_code_model(settings: Settings) -> tuple[str, str] | None:
+    """Return the dedicated code model only when this request already uses local Ollama.
+
+    A local coding model must never silently replace a user's hosted provider or the shared
+    free-tier choice. In those cases, coding requests stay on the model they selected.
+    """
+    model = settings.code_llm_model.strip()
+    if not model:
+        return None
+    user = active_model()
+    if user is not None:
+        if (
+            user.free
+            or user.provider != "ollama"
+            or not _same_ollama_endpoint(user.base_url, settings.ollama_base_url)
+        ):
+            return None
+        return model, user.base_url
+    if settings.free_tier or settings.llm_provider != "ollama":
+        return None
+    return model, settings.ollama_base_url
+
+
+def _same_ollama_endpoint(left: str, right: str) -> bool:
+    """Treat localhost and 127.0.0.1 as the same local Ollama service."""
+    try:
+        def endpoint(value: str) -> tuple[str, str, int | None, str]:
+            parsed = urlsplit(value.rstrip("/"))
+            host = (parsed.hostname or "").casefold()
+            if host == "localhost":
+                host = "127.0.0.1"
+            return parsed.scheme.casefold(), host, parsed.port, parsed.path.rstrip("/")
+
+        return endpoint(left) == endpoint(right)
+    except ValueError:
+        return left.rstrip("/").casefold() == right.rstrip("/").casefold()
+
+
+def resolve_code_model(settings: Settings) -> str:
+    """Model id used for an implementation request, for cache keys and trace records."""
+    target = _local_code_model(settings)
+    return target[0] if target else resolve_model(settings)
+
+
+def get_coding_llm(settings: Settings, usage: UsageScope | None = None) -> LLMProvider:
+    """Use a configured local code model for local requests; preserve all other choices."""
+    target = _local_code_model(settings)
+    if target is None:
+        return get_llm(settings, usage)
+
+    from app.services.llm.ollama import OllamaProvider
+    from app.services.usage import MeteredLLM
+
+    model, base_url = target
+    provider = OllamaProvider(model, base_url, timeout=settings.llm_timeout)
+    return MeteredLLM(provider, settings, usage)
 
 
 def _provider(settings: Settings) -> LLMProvider:
@@ -259,10 +318,12 @@ __all__ = [
     "count_tokens",
     "current_model",
     "describe",
+    "get_coding_llm",
     "get_llm",
     "llm_status",
     "on_free_tier",
     "provider_name",
+    "resolve_code_model",
     "resolve_model",
     "server_provider",
 ]

@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import re
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import update
@@ -20,15 +22,37 @@ from app.core.database import get_session_factory
 from app.demo import sample_papers as sp
 from app.main import app
 from app.models.user import User
+from app.services import arxiv
 from app.workers.dispatcher import get_dispatcher
 from tests.conftest import register
 from tests.test_indexing_api import upload
 
+
+def _watch_feed() -> str:
+    # Published "yesterday" so it always falls inside the watch's default lookback window,
+    # whatever date the suite happens to run on.
+    published = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <id>http://arxiv.org/abs/2501.00001v1</id>
+    <published>{published}</published>
+    <title>A Benchmark For Low Rank Adapters</title>
+    <summary>A benchmark for low rank adapters across many tasks.</summary>
+  </entry>
+</feed>"""
+
 API = "/api/v1"
 # Signed URLs, not session-authenticated: covered by the asset signature tests.
-SKIP_PREFIXES = ("/api/v1/assets/",)
+SKIP_PREFIXES = (
+    "/api/v1/assets/",
+    # Deliberately unauthenticated by design (no `user: CurrentUser` on any route — see
+    # api/routes/public.py's docstring): there is no "my resource vs. another user's" check to
+    # make here. Covered by its own tests instead (test_public_watches_api.py).
+    "/api/v1/public/",
+)
 # Literal path values, not ids.
-LITERALS = {"step": "questions", "page": "1"}
+LITERALS = {"step": "questions", "page": "1", "platform": "slack"}
 
 
 async def ok(response: Any, codes: tuple[int, ...] = (200, 201, 202)) -> Any:
@@ -37,9 +61,21 @@ async def ok(response: Any, codes: tuple[int, ...] = (200, 201, 202)) -> Any:
 
 
 @pytest.fixture
-async def owned(auth_client: AsyncClient, settings: Settings, tmp_path: Path) -> dict[str, str]:
+async def owned(
+    auth_client: AsyncClient,
+    settings: Settings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, str]:
     """One of everything, owned by the signed-in user."""
     c, drain = auth_client, get_dispatcher(settings).drain
+    monkeypatch.setattr(
+        arxiv,
+        "client_factory",
+        lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda r: httpx.Response(200, text=_watch_feed()))
+        ),
+    )
     docs = []
     for name, paper in (("lora", sp.LORA_PAPER), ("retrieval", sp.RETRIEVAL_PAPER)):
         data = sp.write_sample_pdf(paper, tmp_path / f"{name}.pdf").read_bytes()
@@ -73,11 +109,48 @@ async def owned(auth_client: AsyncClient, settings: Settings, tmp_path: Path) ->
         await ok(
             await c.post(
                 f"{API}/projects",
-                json={"idea": "Cheaper fine-tuning of large language models on one GPU"},
+                json={
+                    "idea": "Cheaper fine-tuning of large language models on one GPU",
+                    "collection_id": collection["id"],
+                },
             )
         )
     )["id"]
     await drain()
+    result_analysis = await ok(
+        await c.post(
+            f"{API}/projects/{ids['project_id']}/experiments/analyze-results",
+            json={
+                "filename": "results.csv",
+                "csv_text": (
+                    "experiment,dataset,system,seed,metric,value,status,note\n"
+                    "baseline,toy,BM25,1,Exact match,0.8,ok,\n"
+                ),
+            },
+        )
+    )
+    chunks = await ok(await c.get(f"{API}/documents/{docs[0]}/chunks?limit=1"))
+    ids["match_id"] = (
+        await ok(
+            await c.post(
+                f"{API}/projects/{ids['project_id']}/experiments/paper-run-matches",
+                json={
+                    "result_analysis_id": result_analysis["steps"]["experiments"]["result_analyses"][0]["id"],
+                    "run_experiment": "baseline",
+                    "run_dataset": "toy",
+                    "run_system": "BM25",
+                    "run_metric": "Exact match",
+                    "run_split": "validation",
+                    "evidence_chunk_id": chunks["items"][0]["id"],
+                    "paper_dataset": "toy",
+                    "paper_system": "BM25",
+                    "paper_metric": "Exact match",
+                    "paper_split": "validation",
+                    "reported_mean": 0.8,
+                },
+            )
+        )
+    )["steps"]["experiments"]["paper_run_matches"][0]["id"]
     dataset = await ok(await c.post(f"{API}/evaluation/datasets", json={"name": "Mine"}))
     ids["dataset_id"] = dataset["id"]
     hit = (await ok(await c.post(f"{API}/search", json={"query": "adapters", "mode": "keyword"})))[
@@ -98,6 +171,23 @@ async def owned(auth_client: AsyncClient, settings: Settings, tmp_path: Path) ->
     ids["entity_id"] = (await ok(await c.get(f"{API}/entities")))[0]["id"]
     ids["key"] = (await ok(await c.get(f"{API}/authors")))[0]["key"]
     ids["session_id"] = (await ok(await c.get(f"{API}/users/me/sessions")))[0]["id"]
+    watch = await ok(
+        await c.post(
+            f"{API}/watches",
+            json={
+                "name": "Mine",
+                "query": "low rank adapters benchmark",
+                "relevance_threshold": 0.0,
+            },
+        )
+    )
+    ids["watch_id"] = watch["id"]
+    await ok(await c.post(f"{API}/watches/{watch['id']}/run"), (202,))
+    await drain()
+    digest = await ok(await c.get(f"{API}/watches/{watch['id']}/digest"))
+    assert digest["items"], "the canned arXiv feed must produce at least one digest entry"
+    ids["entry_id"] = digest["items"][0]["id"]
+    ids["notification_id"] = (await ok(await c.get(f"{API}/notifications")))["items"][0]["id"]
     return ids
 
 
@@ -155,6 +245,7 @@ async def test_another_user_can_reach_none_of_my_resources(
         f"projects/{owned['project_id']}",
         f"evaluation/datasets/{owned['dataset_id']}",
         f"evaluation/runs/{owned['run_id']}",
+        f"watches/{owned['watch_id']}",
     ):
         await ok(await client.get(f"{API}/{path}"), (200,))
     sessions = (await client.get(f"{API}/users/me/sessions")).json()
@@ -163,3 +254,5 @@ async def test_another_user_can_reach_none_of_my_resources(
     assert any(
         n["id"] == owned["note_id"] for n in (notes["items"] if isinstance(notes, dict) else notes)
     )
+    notifications = (await client.get(f"{API}/notifications")).json()
+    assert any(n["id"] == owned["notification_id"] for n in notifications["items"])

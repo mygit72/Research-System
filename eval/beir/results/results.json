@@ -1,0 +1,84 @@
+{
+  "dataset": "scifact",
+  "n_corpus_docs": 5183,
+  "n_test_queries": 300,
+  "chunks": 6572,
+  "docs_split_into_multiple_chunks": 1296,
+  "settings": {
+    "embedding_model": "BAAI/bge-small-en-v1.5",
+    "reranker_model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+    "chunking_strategy": "section_aware",
+    "chunk_size": 384,
+    "chunk_overlap": 64,
+    "bm25_k1": 1.2,
+    "bm25_b": 0.75,
+    "rrf_k": 60,
+    "candidates_per_retriever": 100,
+    "rerank_candidates_for_table": 100
+  },
+  "hardware": {
+    "cpu": "12th Gen Intel(R) Core(TM) i5-12400F",
+    "gpu": "none (torch CPU build; all runs are CPU-only)",
+    "python": "3.12.10",
+    "os": "Windows-10-10.0.19045-SP0"
+  },
+  "metrics": {
+    "BM25 only": {
+      "nDCG@10": 0.6766,
+      "Recall@10": 0.8134,
+      "Recall@100": 0.9082,
+      "MRR@10": 0.6399,
+      "n_queries": 300
+    },
+    "Dense only": {
+      "nDCG@10": 0.7097,
+      "Recall@10": 0.8312,
+      "Recall@100": 0.9433,
+      "MRR@10": 0.6774,
+      "n_queries": 300
+    },
+    "Hybrid (RRF)": {
+      "nDCG@10": 0.717,
+      "Recall@10": 0.8279,
+      "Recall@100": 0.965,
+      "MRR@10": 0.685,
+      "n_queries": 300
+    },
+    "Hybrid + rerank": {
+      "nDCG@10": 0.6995,
+      "Recall@10": 0.8207,
+      "Recall@100": 0.965,
+      "MRR@10": 0.6701,
+      "n_queries": 300
+    }
+  },
+  "latency_ms": {
+    "bm25_only": {
+      "p50": 3.49,
+      "p95": 7.15,
+      "n": 300
+    },
+    "dense_only": {
+      "p50": 67.23,
+      "p95": 79.36,
+      "n": 300
+    },
+    "hybrid_rrf": {
+      "p50": 71.76,
+      "p95": 84.67,
+      "n": 300
+    },
+    "hybrid_rerank_candidates_100": {
+      "p50": 3368.85,
+      "p95": 3764.3,
+      "n": 300
+    },
+    "hybrid_rerank_candidates_30_app_default": {
+      "p50": 1120.46,
+      "p95": 1291.52,
+      "n": 300
+    }
+  },
+  "wall_clock_seconds": 1797.8,
+  "dense_index_build_seconds": 424.6
+}

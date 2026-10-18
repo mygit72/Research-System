@@ -1,23 +1,52 @@
 # Research Intelligence
 
-**An AI research workspace: upload papers, then search, question, compare and connect them, with every answer cited to the exact page it came from.**
+An AI workspace for reading and interrogating research papers. Upload a PDF, ask it a
+question, and get an answer with a citation pointing back to the exact page and passage
+it came from — not a summary that sounds plausible, an answer you can check.
 
-This isn't a thin wrapper around an LLM API. The retrieval pipeline is implemented and
-inspectable end to end: structure-aware parsing and chunking, hand-written BM25, dense
-retrieval, Reciprocal Rank Fusion, cross-encoder reranking, context selection, cited
-generation, claim-level verification and a retrieval/RAG evaluation framework.
+The retrieval layer isn't a thin wrapper around someone else's API. Chunking, BM25,
+dense search, rank fusion and reranking are all implemented in this codebase, which is
+the only reason it's possible to inspect, tune, and actually evaluate how search behaves
+instead of trusting whatever a hosted service decides to return.
 
-> **Status:** all 16 phases are complete — document ingestion and parsing; chunking, embeddings and a
-> Qdrant index; BM25 + dense hybrid retrieval with RRF and cross-encoder reranking; research chat with
-> streamed, cited and claim-checked answers; structured paper summaries; 2–5 paper comparisons;
-> collections, tags, notes and bookmarks; a knowledge graph with topics, timeline and authors; cited
-> literature reviews, research gaps, disagreements and a bounded deep-research agent; a research project
-> builder; an evaluation dashboard; usage, cost and latency tracking with caches and Prometheus/Grafana;
-> a security review with a cross-tenant test over every route; accessibility and browser end-to-end
-> tests; demo mode and a deployment guide. See [PROGRESS.md](PROGRESS.md) for the log and
-> [docs/ROADMAP.md](docs/ROADMAP.md) for the plan.
+## What's in it
 
-## Architecture
+- **Ingestion** for PDF, DOCX, HTML, Markdown and plain text, plus direct import by
+  arXiv id or DOI. Dedup by file hash, DOI/arXiv id, or title similarity; re-uploading a
+  paper keeps version history instead of silently overwriting it.
+- **Structure-aware chunking** — five strategies (fixed, recursive, sentence,
+  section-aware, semantic), with section-aware as the default so a chunk never crosses a
+  section boundary.
+- **Hybrid retrieval**: a hand-written Okapi BM25 index, dense search over Qdrant, fused
+  with Reciprocal Rank Fusion, then reordered by a cross-encoder reranker. The Search
+  page has a debug panel that shows exactly how each result was found — which retriever
+  surfaced it, at what rank, and what the reranker did to it.
+- **Research chat** with streamed, cited answers. Every citation is checked against the
+  passage it points to, and each claim gets an entailment check (supported / partial /
+  unsupported) instead of a flat confidence number.
+- **Paper summaries**, 2–5 paper comparisons, a knowledge graph with entity extraction
+  and clustering, author/dataset/method analysis, and a timeline view.
+- **Literature reviews, research gaps, and disagreement detection**, plus a bounded
+  deep-research agent: it plans a handful of sub-questions, searches the library with a
+  read-only tool, answers each one from numbered passages, and writes a conclusion from
+  what it actually cited — under a fixed step count and timeout, with the whole trace
+  visible in the UI.
+- **A research project builder** that turns an idea into questions, a method plan, an
+  experiment plan, and a runnable starter project — real baseline implementations
+  (BM25, DPR, Contriever, a cross-encoder reranker) wired to tested metrics, not
+  placeholder code.
+- **Research Watches**: save a topic and an interval, and the app periodically searches
+  arXiv, scores new papers against it, optionally imports what clears the threshold, and
+  sends a digest in-app or to Slack/Discord. No daily check-in required.
+- **An evaluation framework** for comparing retrieval and RAG configurations against your
+  own papers and questions (`docs/EVALUATION.md`), plus a separate benchmark against BEIR
+  SciFact for numbers you can cite outside this app (`eval/beir/`).
+
+Everyone's data stays theirs: each user can use the server's configured model, bring
+their own API key, or point at a model running on their own machine, and a cross-tenant
+test suite checks that no route leaks another user's documents.
+
+## How retrieval works
 
 ```mermaid
 flowchart TD
@@ -44,7 +73,10 @@ flowchart LR
     Struct --> Meta[Metadata extraction] --> PG[(PostgreSQL)]
 ```
 
-Details, including the database schema, API design, decisions, bottlenecks and risks, are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+A paper goes in once through parsing and structure analysis, then gets chunked and
+embedded. A query goes through BM25 and the dense index in parallel, gets fused, and the
+top candidates get reranked before anything is sent to the model. Full design decisions,
+the schema, and known bottlenecks are in `docs/ARCHITECTURE.md`.
 
 ## Tech stack
 
@@ -52,14 +84,14 @@ Details, including the database schema, API design, decisions, bottlenecks and r
 |---|---|
 | Backend | Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2 (async), Alembic |
 | Data | PostgreSQL (SQLite for local dev), Redis, Qdrant |
-| Jobs | Celery + Redis (or in-process for local dev) |
-| AI / ML | PyTorch, Transformers, sentence-transformers, NetworkX, PyMuPDF; clustering (K-Means, agglomerative, HDBSCAN) hand-written in NumPy |
+| Jobs | Celery + Redis (or in-process for local dev); an asyncio scheduler for Research Watches |
+| AI / ML | PyTorch, Transformers, sentence-transformers, NetworkX, PyMuPDF; BM25 and clustering (K-Means, agglomerative, HDBSCAN) written directly over NumPy |
 | Frontend | React 19, TypeScript, Vite, Tailwind CSS v4, TanStack Query, Zustand, Radix UI |
 | Infra | Docker Compose, nginx, GitHub Actions, structured JSON logging, Prometheus metrics |
 
-## Quick start
+## Getting started
 
-**Without Docker** (SQLite, in-process jobs):
+Without Docker, using SQLite and in-process jobs:
 
 ```bash
 # Windows
@@ -68,46 +100,60 @@ powershell -ExecutionPolicy Bypass -File scripts/dev.ps1
 ./scripts/dev.sh
 ```
 
-Then open http://localhost:5173, create an account and press **Try sample papers** to load three
-synthetic papers (or upload your own). The default language model is Ollama `qwen2.5:3b`
-(`ollama pull qwen2.5:3b`); everything else runs locally without API keys.
+Open http://localhost:5173, create an account, and either load the sample papers or
+upload your own. The default model is Ollama's `qwen2.5:3b` (`ollama pull qwen2.5:3b`);
+everything else runs locally with no API keys involved.
 
-**Just want to use it on your own computer, with your own model?** Run
-`scripts/run-local.ps1` (Windows) or `./scripts/run-local.sh` (macOS / Linux): it checks what's
-installed, sets everything up once, pulls the model into Ollama and starts the app. See
-[docs/RUN_LOCALLY.md](docs/RUN_LOCALLY.md). On any copy, **Settings → AI** lets each user keep the
-server's model, bring their own API key (OpenAI, Gemini, Groq, OpenRouter, Mistral —
-stored encrypted, never shown again) or use a model on their computer.
+Want it fully set up for you, including pulling the model? Run `scripts/run-local.ps1`
+(Windows) or `./scripts/run-local.sh` (macOS/Linux) — see `docs/RUN_LOCALLY.md`.
 
-**Running it as a public site?** It can offer everyone a free shared model through the site's own
-key (NVIDIA Nemotron 3 Ultra on OpenRouter is the worked example): opt-in per user, paced, with a
-daily allowance — see "A free model for everyone" in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
-Nothing a user adds is public or visible to another account, administrators included; what that
-does and doesn't cover is in [docs/SECURITY.md](docs/SECURITY.md) (Privacy).
+Prefer to do each step yourself, or the script doesn't fit your setup? [`INSTALL.md`](INSTALL.md)
+has the full manual procedure, backend and frontend separately, plus a Docker Compose path.
 
-**With Docker** (PostgreSQL, Redis, Qdrant, Celery workers):
+With Docker (PostgreSQL, Redis, Qdrant, Celery, the isolated code runner):
 
 ```bash
 cp .env.example .env
 docker compose up --build        # http://localhost:8080
 ```
 
-See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for manual setup, tests and conventions.
+Any user can also skip local models entirely and bring their own API key (OpenAI,
+Gemini, Groq, OpenRouter, Mistral) from Settings → AI, or point at a model on their own
+network.
 
 ## Documentation
 
 | Doc | Contents |
 |---|---|
-| [PROGRESS.md](PROGRESS.md) | Session-by-session progress log and current status |
-| [docs/RUN_LOCALLY.md](docs/RUN_LOCALLY.md) | Run your own copy with a local model, or use your own API key |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | 16 phases plus suggested additions |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, schema, API, RAG pipeline, decisions, risks |
+| [INSTALL.md](INSTALL.md) | Manual, step-by-step install — no scripts |
+| [FEATURES.md](FEATURES.md) | Full feature catalog, in detail |
+| [PROGRESS.md](PROGRESS.md) | Build log and current status |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, schema, API, the RAG pipeline, decisions and risks |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Setup, testing, migrations, conventions |
-| [docs/SECURITY.md](docs/SECURITY.md) | Threat model, security controls and where they are tested |
-| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Production deployment, HTTPS, demo instance, monitoring, backups, upgrades, scaling |
-| [docs/ACCESSIBILITY.md](docs/ACCESSIBILITY.md) | Accessibility audit results and support |
-| [docs/EVALUATION.md](docs/EVALUATION.md) | Evaluation datasets, retrieval and answer metrics, how runs are compared |
-| [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) | Usage and cost tracking, latency per stage, caches (incl. the semantic answer cache), Prometheus/Grafana |
+| [docs/EVALUATION.md](docs/EVALUATION.md) | Retrieval and answer metrics, how configurations are compared |
+| [docs/SECURITY.md](docs/SECURITY.md) | Threat model and where each control is tested |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Production deployment, HTTPS, backups, scaling |
+| [docs/ACCESSIBILITY.md](docs/ACCESSIBILITY.md) | Accessibility audit and support |
+| [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) | Usage/cost tracking, latency, caching, Prometheus/Grafana |
 
-The API is documented interactively at `/docs` (OpenAPI); the AI pipeline is described in
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#6-ai--rag-pipeline-design).
+The API is also documented at `/docs` (OpenAPI) once the backend is running.
+
+## Tests
+
+```bash
+cd backend && python -m pytest        # 648 tests by default
+cd frontend && npm test               # 170 unit tests
+cd frontend && npm run e2e            # Playwright, Chromium
+```
+
+Tests that need a downloaded model are opt-in (`RUN_MODEL_TESTS=1`) so the default suite
+never pulls model weights or needs a database service. `ruff`/`mypy` for the backend and
+`oxlint`/`tsc` for the frontend run clean; CI (`.github/workflows/ci.yml`) runs all of it
+plus a migration up/down/up check against a real PostgreSQL instance.
+
+## Running your own instance for other people
+
+A copy reachable by anyone other than you is a server, not a local tool — see
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) before exposing one, and
+[docs/SECURITY.md](docs/SECURITY.md) for what's covered (and what isn't) around user
+data and isolation.

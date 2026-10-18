@@ -2,6 +2,8 @@
 import type {
   ActivityEvent,
   ConnectionTest,
+  CodeSyntaxCheck,
+  ProjectCodeRun,
   ModelChoiceRequest,
   ModelChoiceView,
   GuideStep,
@@ -12,6 +14,9 @@ import type {
   EvalRunConfig,
   EvalRunSummary,
   Project,
+  PaperRunMatchRequest,
+  ClaimEvidenceSearch,
+  ReferenceAttentionRun,
   ProjectSummary,
   ProjectUpdate,
   StarterFile,
@@ -76,6 +81,16 @@ import type {
   UploadResponse,
   UsageSummary,
   UserPreferences,
+  DigestEntry,
+  Notification,
+  PublicDigestEntry,
+  PublicWatch,
+  Watch,
+  WatchCreate,
+  WatchRun,
+  WatchUpdate,
+  Webhook,
+  WebhookPlatform,
 } from '@/types/api'
 import { request, streamRequest, uploadWithProgress } from './http'
 
@@ -276,9 +291,10 @@ export const searchApi = {
 }
 
 export const chatApi = {
-  list: (params: { documentId?: string; limit?: number } = {}) => {
+  list: (params: { documentId?: string; singlePaper?: boolean; limit?: number } = {}) => {
     const query = new URLSearchParams()
     if (params.documentId) query.set('document_id', params.documentId)
+    if (params.singlePaper) query.set('single_paper', 'true')
     if (params.limit) query.set('limit', String(params.limit))
     const suffix = query.size ? `?${query}` : ''
     return request<Page<Conversation>>(`/chat/conversations${suffix}`)
@@ -356,17 +372,63 @@ export const projectsApi = {
   update: (id: string, body: ProjectUpdate) =>
     request<Project>(`/projects/${id}`, { method: 'PATCH', body: body as Record<string, unknown> }),
   remove: (id: string) => request<void>(`/projects/${id}`, { method: 'DELETE' }),
-  suggest: (id: string, step: 'questions' | 'outline') =>
+  suggest: (id: string, step: 'questions' | 'outline' | 'code') =>
     request<Project>(`/projects/${id}/suggest/${step}`, { method: 'POST' }),
   startReport: (id: string, step: 'background' | 'gaps') =>
     request<Project>(`/projects/${id}/reports/${step}`, { method: 'POST' }),
   methods: (id: string) => request<Project>(`/projects/${id}/methods`, { method: 'POST' }),
   planExperiments: (id: string, body: { deadline?: string; replace?: boolean }) =>
     request<Project>(`/projects/${id}/experiments`, { method: 'POST', body }),
+  runAttentionExperiment: (id: string, scoreDivisor: number) =>
+    request<ReferenceAttentionRun>(`/projects/${id}/experiments/run-attention`, {
+      method: 'POST',
+      body: { score_divisor: scoreDivisor },
+    }),
+  findClaimEvidence: (id: string, claim: string) =>
+    request<ClaimEvidenceSearch>(`/projects/${id}/experiments/claim-evidence`, {
+      method: 'POST',
+      body: { claim },
+    }),
+  runClaimStressTest: (
+    id: string,
+    body: { claim: string; evidence_chunk_ids: string[]; dimensions: number[]; seed: number },
+  ) => request<Project>(`/projects/${id}/experiments/claim-run`, { method: 'POST', body }),
+  analyzeResults: (id: string, csv_text: string, filename: string) =>
+    request<Project>(`/projects/${id}/experiments/analyze-results`, {
+      method: 'POST',
+      body: { csv_text, filename },
+    }),
+  createPaperRunMatch: (id: string, body: PaperRunMatchRequest) =>
+    request<Project>(`/projects/${id}/experiments/paper-run-matches`, { method: 'POST', body: body as unknown as Record<string, unknown> }),
+  deletePaperRunMatch: (id: string, matchId: string) =>
+    request<Project>(`/projects/${id}/experiments/paper-run-matches/${matchId}`, { method: 'DELETE' }),
+  analyzePredictions: (
+    id: string,
+    jsonl_text: string,
+    filename: string,
+    metric: string,
+    higher_is_better: boolean,
+  ) =>
+    request<Project>(`/projects/${id}/experiments/analyze-predictions`, {
+      method: 'POST',
+      body: { jsonl_text, filename, metric, higher_is_better },
+    }),
   export: (id: string, format: 'md' | 'docx' | 'latex' | 'code') =>
     request<Blob>(`/projects/${id}/export?format=${format}`, { blob: true }),
   guide: (id: string, step: GuideStep) => request<StepGuide>(`/projects/${id}/guide/${step}`),
-  code: (id: string) => request<{ files: StarterFile[] }>(`/projects/${id}/code`),
+  code: (id: string) => request<{ files: StarterFile[]; runs: ProjectCodeRun[] }>(`/projects/${id}/code`),
+  saveCodeFile: (id: string, path: string, content: string) =>
+    request<{ path: string; status: string }>(`/projects/${id}/code-file`, {
+      method: 'PUT',
+      body: { path, content },
+    }),
+  checkCodeFile: (id: string, path: string, content: string) =>
+    request<CodeSyntaxCheck>(`/projects/${id}/code-file/check`, {
+      method: 'POST',
+      body: { path, content },
+    }),
+  runCode: (id: string) =>
+    request<ProjectCodeRun>(`/projects/${id}/code/run`, { method: 'POST' }),
 }
 
 export const evaluationApi = {
@@ -398,4 +460,48 @@ export const usageApi = {
 export const demoApi = {
   samplePapers: () =>
     request<{ added: number; document_ids: string[]; collection_id: string }>('/demo/sample-papers', { method: 'POST' }),
+}
+
+export const watchesApi = {
+  list: () => request<Watch[]>('/watches'),
+  get: (id: string) => request<Watch>(`/watches/${id}`),
+  create: (body: WatchCreate) =>
+    request<Watch>('/watches', { method: 'POST', body: body as unknown as Record<string, unknown> }),
+  update: (id: string, body: WatchUpdate) =>
+    request<Watch>(`/watches/${id}`, {
+      method: 'PATCH',
+      body: body as unknown as Record<string, unknown>,
+    }),
+  remove: (id: string) => request<void>(`/watches/${id}`, { method: 'DELETE' }),
+  runNow: (id: string) => request<WatchRun>(`/watches/${id}/run`, { method: 'POST' }),
+  runs: (id: string, params: { limit?: number; offset?: number } = {}) =>
+    request<Page<WatchRun>>(`/watches/${id}/runs${qs(params)}`),
+  digest: (id: string, params: { limit?: number; offset?: number } = {}) =>
+    request<Page<DigestEntry>>(`/watches/${id}/digest${qs(params)}`),
+  importEntry: (watchId: string, entryId: string) =>
+    request<DigestEntry>(`/watches/${watchId}/digest/${entryId}/import`, { method: 'POST' }),
+}
+
+export const notificationsApi = {
+  list: (params: { limit?: number; offset?: number } = {}) =>
+    request<Page<Notification>>(`/notifications${qs(params)}`),
+  unreadCount: () => request<{ unread: number }>('/notifications/unread-count'),
+  markRead: (id: string) => request<Notification>(`/notifications/${id}/read`, { method: 'POST' }),
+  markAllRead: () => request<{ marked: number }>('/notifications/read-all', { method: 'POST' }),
+}
+
+export const publicApi = {
+  getWatch: (id: string) => request<PublicWatch>(`/public/watches/${id}`),
+  getDigest: (id: string, params: { limit?: number; offset?: number } = {}) =>
+    request<Page<PublicDigestEntry>>(`/public/watches/${id}/digest${qs(params)}`),
+}
+
+export const webhooksApi = {
+  list: () => request<Webhook[]>('/users/me/webhooks'),
+  save: (platform: WebhookPlatform, url: string) =>
+    request<Webhook>(`/users/me/webhooks/${platform}`, { method: 'PUT', body: { url } }),
+  remove: (platform: WebhookPlatform) =>
+    request<void>(`/users/me/webhooks/${platform}`, { method: 'DELETE' }),
+  test: (platform: WebhookPlatform) =>
+    request<{ ok: boolean }>(`/users/me/webhooks/${platform}/test`, { method: 'POST' }),
 }
