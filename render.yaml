@@ -52,5 +52,5 @@ services:
       - key: JWT_SECRET
         generateValue: true # Render automatically generates a secure cryptographic secret
       - key: CORS_ORIGINS
-        sync: false # Required: Vercel frontend URL, e.g. ["https://your-demo.vercel.app"]
+        value: "https://research-system-orcin.vercel.app,http://localhost:5173"
 

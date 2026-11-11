@@ -4,15 +4,15 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://BACKEND_HOST_PLACEHOLDER/api/:path*"
+      "destination": "https://research-intelligence-backend.onrender.com/api/:path*"
     },
     {
       "source": "/health",
-      "destination": "https://BACKEND_HOST_PLACEHOLDER/health"
+      "destination": "https://research-intelligence-backend.onrender.com/health"
     },
     {
       "source": "/ready",
-      "destination": "https://BACKEND_HOST_PLACEHOLDER/ready"
+      "destination": "https://research-intelligence-backend.onrender.com/ready"
     },
     {
       "source": "/((?!api|health|ready).*)",
