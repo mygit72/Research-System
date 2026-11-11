@@ -114,7 +114,7 @@ async def test_ensure_shared_sample_library_idempotence(
     settings: Settings,
 ) -> None:
     from app.core.database import get_session_factory
-    from app.demo.shared_library import ensure_shared_sample_library
+    from app.demo.shared_library import ensure_shared_sample_library, RESEARCH_PAPERS
     from app.models.document import Document
     from app.models.user import User
     from app.workers.dispatcher import get_dispatcher
@@ -136,17 +136,143 @@ async def test_ensure_shared_sample_library_idempotence(
         assert user.password_hash == "!disabled-demo-system-account"
         assert user.is_active is True
 
-        # Check documents
+        # Check documents are the 3 real research papers
         docs = (
             await session.execute(
                 select(Document).where(Document.user_id == settings.demo_user_id)
             )
         ).scalars().all()
         assert len(docs) == 3
+        filenames = {d.original_filename for d in docs}
+        assert filenames == set(RESEARCH_PAPERS.keys())
 
     # Second bootstrap (must be idempotent and report ready without adding)
     res2 = await ensure_shared_sample_library(settings, session_factory)
     assert res2["status"] == "ready"
     assert res2["count"] == 3
+
+
+@pytest.mark.anyio
+async def test_shared_library_restores_missing_files(
+    app: object,
+    settings: Settings,
+) -> None:
+    """Simulate an ephemeral filesystem restart: delete stored PDFs, then verify
+    that re-running ensure_shared_sample_library regenerates them and re-enqueues
+    failed documents."""
+    from app.core.database import get_session_factory
+    from app.demo.shared_library import ensure_shared_sample_library
+    from app.models.document import Document, DocumentStatus, DocumentVersion
+    from app.services.storage import get_storage
+    from app.workers.dispatcher import get_dispatcher
+    from sqlalchemy import select
+
+    session_factory = get_session_factory()
+    storage = get_storage(settings)
+
+    # Bootstrap first to have all 3 docs
+    res = await ensure_shared_sample_library(settings, session_factory)
+    assert res.get("total", res.get("count")) == 3
+    await get_dispatcher(settings).drain()
+
+    # Collect storage keys and delete the files from disk
+    async with session_factory() as session:
+        docs = (
+            await session.execute(
+                select(Document).where(Document.user_id == settings.demo_user_id)
+            )
+        ).scalars().all()
+        for doc in docs:
+            if doc.current_version_id:
+                version = await session.get(DocumentVersion, doc.current_version_id)
+                if version:
+                    file_path = storage.path(version.storage_key)
+                    file_path.unlink(missing_ok=True)
+
+            # Simulate a failed document (as would happen on Render)
+            doc.status = DocumentStatus.FAILED
+            doc.error_message = "The source file is no longer available on disk"
+        await session.commit()
+
+    # Re-run bootstrap — should detect missing files and restore them
+    res2 = await ensure_shared_sample_library(settings, session_factory)
+    assert res2["status"] == "ready"
+    assert res2["count"] == 3
+    assert res2["restored"] == 3
+    assert res2["reenqueued"] == 3
+    await get_dispatcher(settings).drain()
+
+    # Verify files exist on disk again
+    async with session_factory() as session:
+        docs = (
+            await session.execute(
+                select(Document).where(Document.user_id == settings.demo_user_id)
+            )
+        ).scalars().all()
+        for doc in docs:
+            if doc.current_version_id:
+                version = await session.get(DocumentVersion, doc.current_version_id)
+                if version:
+                    file_path = storage.path(version.storage_key)
+                    assert file_path.exists(), f"File not restored: {file_path}"
+
+
+@pytest.mark.anyio
+async def test_reconcile_legacy_synthetic_records(
+    app: object,
+    settings: Settings,
+) -> None:
+    """Verify that legacy synthetic demo records are cleanly replaced with the 3 real papers."""
+    from app.core.database import get_session_factory
+    from app.demo.shared_library import (
+        ensure_shared_sample_library,
+        RESEARCH_PAPERS,
+        LEGACY_SYNTHETIC_FILENAMES,
+    )
+    from app.models.document import Document
+    from app.models.user import User
+    from sqlalchemy import select
+
+    session_factory = get_session_factory()
+
+    # Seed the demo user first, then seed a legacy synthetic doc under demo_user_id
+    async with session_factory() as session:
+        user = await session.get(User, settings.demo_user_id)
+        if user is None:
+            user = User(
+                id=settings.demo_user_id,
+                email="demo.system@research-intelligence.local",
+                password_hash="!disabled-demo-system-account",
+                full_name="Research Intelligence Demo",
+                is_active=True,
+            )
+            session.add(user)
+            await session.commit()
+
+        legacy_doc = Document(
+            user_id=settings.demo_user_id,
+            title="Old Synthetic Paper",
+            doc_type="pdf",
+            original_filename="sample-hybrid-retrieval.pdf",
+        )
+        session.add(legacy_doc)
+        await session.commit()
+
+    # Run bootstrap
+    res = await ensure_shared_sample_library(settings, session_factory)
+    assert res.get("total", res.get("count")) == 3
+
+    # Check that legacy doc was cleaned up and only 3 real papers remain
+    async with session_factory() as session:
+        docs = (
+            await session.execute(
+                select(Document).where(Document.user_id == settings.demo_user_id)
+            )
+        ).scalars().all()
+        assert len(docs) == 3
+        filenames = {d.original_filename for d in docs}
+        assert filenames == set(RESEARCH_PAPERS.keys())
+        assert not filenames.intersection(LEGACY_SYNTHETIC_FILENAMES)
+
 
 
