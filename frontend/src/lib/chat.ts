@@ -137,10 +137,11 @@ export const INTENT_LABELS: Record<string, string> = {
 }
 
 export const LIBRARY_SUGGESTIONS = [
-  'What methods do my papers use to reduce memory during fine-tuning?',
-  'Which datasets are used for evaluation?',
   'What limitations do the authors mention?',
-  'Compare the approaches proposed in my papers',
+  'How does reciprocal rank fusion combine BM25 and dense retrieval?',
+  'What are the parameter efficiency advantages of Low-Rank Adaptation (LoRA)?',
+  'How do RAG adapters improve domain-specific evidence retrieval?',
+  'Compare the methods and evaluation benchmarks across the sample papers',
 ]
 
 export const PAPER_SUGGESTIONS = [

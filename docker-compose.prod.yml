@@ -1,0 +1,63 @@
+# Production Compose Override for Oracle Cloud Always Free (ARM64)
+# Run with: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+name: research-intelligence
+
+services:
+  postgres:
+    restart: unless-stopped
+    # Ports remain strictly internal to the Docker network (no public 5432)
+
+  redis:
+    restart: unless-stopped
+    # Ports remain strictly internal to the Docker network (no public 6379)
+
+  qdrant:
+    restart: unless-stopped
+    # Unbind host port 6333 in production; vector database is internal only
+    ports: !reset []
+
+  backend:
+    restart: unless-stopped
+    # Unbind host port 8000 in production; API is reachable only via Nginx reverse-proxy
+    ports: !reset []
+    environment:
+      ENVIRONMENT: production
+      # Project runner is safely disabled for initial deployment:
+      PROJECT_RUNNER_URL: ""
+      PROJECT_RUNNER_TOKEN: ""
+    depends_on: !reset
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      qdrant: { condition: service_started }
+    deploy:
+      resources:
+        limits:
+          memory: 3072M
+        reservations:
+          memory: 1024M
+
+  worker:
+    restart: unless-stopped
+    # Recycle Celery worker child processes every 50 tasks to prevent memory fragmentation on long-running servers
+    command: ["celery", "-A", "app.workers.celery_app", "worker", "--loglevel=INFO", "--concurrency=2", "--max-tasks-per-child=50"]
+    deploy:
+      resources:
+        limits:
+          memory: 3072M
+        reservations:
+          memory: 1024M
+
+  frontend:
+    restart: unless-stopped
+    # Only the reverse-proxy web server is exposed to the internet
+    ports: !reset
+      - "80:80"
+    volumes:
+      - ./infra/docker/nginx.prod.conf:/etc/nginx/conf.d/default.conf:ro
+
+  # Project runner is safely disabled in the initial public deployment.
+  # The profile "disabled" prevents it from starting on normal `up`.
+  project-runner:
+    profiles: ["disabled"]
+    restart: "no"
+    volumes: !reset []

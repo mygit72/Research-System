@@ -561,6 +561,8 @@ class DocumentService:
 
     async def reprocess(self, user_id: uuid.UUID, document_id: uuid.UUID) -> Document:
         document = await self.get(user_id, document_id)
+        if self.settings.demo_mode and document.user_id == self.settings.demo_user_id:
+            raise PermissionDeniedError("Shared sample papers are read-only in the public demo.")
         if document.status in (DocumentStatus.QUEUED, DocumentStatus.PROCESSING):
             raise ConflictError("This paper is already being processed.")
         version = await self.current_version(document)
@@ -589,6 +591,8 @@ class DocumentService:
 
     async def delete(self, user_id: uuid.UUID, document_id: uuid.UUID) -> None:
         document = await self.get(user_id, document_id)
+        if self.settings.demo_mode and document.user_id == self.settings.demo_user_id:
+            raise PermissionDeniedError("Shared sample papers cannot be deleted in the public demo.")
         versions = await self.repo.list_versions(document.id)
         keys = [v.storage_key for v in versions]
         version_ids = [v.id for v in versions]

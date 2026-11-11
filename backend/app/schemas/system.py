@@ -36,3 +36,6 @@ class PublicConfigResponse(BaseModel):
     local_only: bool
     free_tier: bool  # the server's model is a shared free one that users opt in to
     download_url: str  # where to get the code to run your own copy ("" when not published)
+    demo_mode: bool = False
+    uploads_enabled: bool = True
+    github_url: str = "https://github.com/mygit72/Research-System"

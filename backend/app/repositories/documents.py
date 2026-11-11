@@ -22,12 +22,24 @@ SortKey = Literal["recent", "opened", "published", "title"]
 
 
 class DocumentRepository:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, demo_user_id: uuid.UUID | None = None) -> None:
         self.session = session
+        if demo_user_id is None:
+            from app.core.config import get_settings
+
+            settings = get_settings()
+            if settings.demo_mode:
+                demo_user_id = settings.demo_user_id
+        self.demo_user_id = demo_user_id
 
     async def get_for_user(self, document_id: uuid.UUID, user_id: uuid.UUID) -> Document | None:
+        user_cond = (
+            or_(Document.user_id == user_id, Document.user_id == self.demo_user_id)
+            if self.demo_user_id
+            else (Document.user_id == user_id)
+        )
         result = await self.session.execute(
-            select(Document).where(Document.id == document_id, Document.user_id == user_id)
+            select(Document).where(Document.id == document_id, user_cond)
         )
         return result.unique().scalar_one_or_none()
 
@@ -45,7 +57,12 @@ class DocumentRepository:
     def _filtered(
         self, user_id: uuid.UUID, query: str | None, statuses: list[DocumentStatus] | None
     ) -> Select[tuple[Document]]:
-        stmt = select(Document).where(Document.user_id == user_id)
+        user_cond = (
+            or_(Document.user_id == user_id, Document.user_id == self.demo_user_id)
+            if self.demo_user_id
+            else (Document.user_id == user_id)
+        )
+        stmt = select(Document).where(user_cond)
         if statuses:
             stmt = stmt.where(Document.status.in_(statuses))
         if query:

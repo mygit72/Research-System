@@ -7,7 +7,7 @@ from fastapi import APIRouter, File, Query, Response, UploadFile, status
 from sqlalchemy import func, select
 
 from app.api.deps import CurrentUser, DbSession, DocumentServiceDep, SettingsDep
-from app.core.errors import AppError
+from app.core.errors import AppError, PermissionDeniedError
 from app.models.document import Chunk, DocumentStatus
 from app.models.organization import Collection, CollectionKind
 from app.repositories.documents import DocumentRepository, SortKey
@@ -56,6 +56,12 @@ async def upload_documents(
     documents: DocumentServiceDep,
     files: Annotated[list[UploadFile], File(description="PDF, DOCX, TXT, Markdown or HTML")],
 ) -> UploadResponse:
+    if documents.settings.demo_mode or not documents.settings.uploads_enabled:
+        raise PermissionDeniedError(
+            "Document uploads and custom research libraries are available in the full self-hosted version. "
+            "Visit our GitHub repository to run Research Intelligence locally.",
+            hint=documents.settings.github_url,
+        )
     if len(files) > MAX_FILES_PER_REQUEST:
         raise AppError(
             f"You can upload up to {MAX_FILES_PER_REQUEST} files at once.",
@@ -96,6 +102,12 @@ async def import_zip(
     file: Annotated[UploadFile, File(description="A .zip of papers")],
     collection_name: Annotated[str | None, Query(max_length=120)] = None,
 ) -> ZipImportResponse:
+    if documents.settings.demo_mode or not documents.settings.uploads_enabled:
+        raise PermissionDeniedError(
+            "Document uploads and custom research libraries are available in the full self-hosted version. "
+            "Visit our GitHub repository to run Research Intelligence locally.",
+            hint=documents.settings.github_url,
+        )
     added, failed, skipped = await documents.import_zip(user.id, file)
     items = [await documents.summary(d) for d in added]
     collection_id = None

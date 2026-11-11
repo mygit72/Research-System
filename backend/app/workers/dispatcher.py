@@ -64,7 +64,9 @@ def get_dispatcher(settings: Settings) -> JobDispatcher:
     global _dispatcher
     if _dispatcher is None:
         _dispatcher = (
-            CeleryDispatcher() if settings.job_backend == JobBackend.CELERY else InlineDispatcher()
+            CeleryDispatcher()
+            if settings.job_backend == JobBackend.CELERY
+            else InlineDispatcher(max_concurrency=settings.inline_job_concurrency)
         )
         log.info("job_dispatcher_initialized", backend=settings.job_backend.value)
     return _dispatcher

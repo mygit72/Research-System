@@ -28,6 +28,8 @@ dependencies = [
     "msvc-runtime>=14.40; sys_platform == 'win32'",
     # Retrieval
     "qdrant-client>=1.12",
+    "pgvector>=0.3",
+    "psycopg[binary]>=3.2",
     "numpy>=1.26",
     "snowballstemmer>=2.2",  # BM25 term normalization (pure Python)
     # Knowledge graph (in-memory; a Neo4j store can implement the same GraphStore)

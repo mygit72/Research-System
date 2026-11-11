@@ -43,8 +43,8 @@ def upgrade() -> None:
         batch_op.create_foreign_key(batch_op.f('fk_agent_runs_report_id_research_reports'), 'research_reports', ['report_id'], ['id'], ondelete='SET NULL')
 
     with op.batch_alter_table('agent_watches', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('synthesize', sa.Boolean(), nullable=False, server_default=sa.text('0')))
-        batch_op.add_column(sa.Column('is_public', sa.Boolean(), nullable=False, server_default=sa.text('0')))
+        batch_op.add_column(sa.Column('synthesize', sa.Boolean(), nullable=False, server_default=sa.false()))
+        batch_op.add_column(sa.Column('is_public', sa.Boolean(), nullable=False, server_default=sa.false()))
 
     # ### end Alembic commands ###
 

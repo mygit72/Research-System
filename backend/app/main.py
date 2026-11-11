@@ -137,6 +137,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if settings.job_backend == JobBackend.INLINE and settings.resume_jobs_on_startup:
             # Jobs that were running when the process stopped resume (or are failed cleanly).
             await recover_interrupted_jobs(get_session_factory(), get_dispatcher(settings))
+        if settings.demo_mode and settings.environment != Environment.TEST:
+            from app.demo.shared_library import ensure_shared_sample_library
+
+            try:
+                await ensure_shared_sample_library(settings, get_session_factory())
+            except Exception as exc:
+                log.warning("demo_bootstrap_failed", error=str(exc))
         scheduler_task = None
         if settings.agent_scheduler_enabled and settings.environment != Environment.TEST:
             scheduler_task = asyncio.create_task(run_scheduler(settings))

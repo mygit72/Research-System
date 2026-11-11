@@ -23,7 +23,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
@@ -129,6 +129,9 @@ class SearchOutcome:
 async def build_scope(
     session: AsyncSession, user_id: uuid.UUID, filters: SearchFilters
 ) -> SearchScope:
+    from app.core.config import get_settings
+
+    settings = get_settings()
     rows = await session.execute(
         select(
             Document.id,
@@ -142,7 +145,9 @@ async def build_scope(
         .join(DocumentVersion, DocumentVersion.id == Document.current_version_id)
         .outerjoin(DocumentMetadata, DocumentMetadata.version_id == DocumentVersion.id)
         .where(
-            Document.user_id == user_id,
+            or_(Document.user_id == user_id, Document.user_id == settings.demo_user_id)
+            if settings.demo_mode
+            else (Document.user_id == user_id),
             Document.status == DocumentStatus.READY,
             DocumentVersion.indexed_at.is_not(None),
         )
@@ -522,15 +527,23 @@ def _trace(
 
 async def facets(session: AsyncSession, user_id: uuid.UUID) -> dict[str, Any]:
     """Filter options and suggested searches, all derived from the user's own library."""
+    from app.core.config import get_settings
+
+    settings = get_settings()
     collections = await list_collections(session, user_id)
     counts = await collection_counts(session, [c.id for c in collections])
     tags = await list_tags(session, user_id)
+    user_cond = (
+        or_(Document.user_id == user_id, Document.user_id == settings.demo_user_id)
+        if settings.demo_mode
+        else (Document.user_id == user_id)
+    )
     rows = (
         await session.execute(
             select(Document, DocumentVersion.indexed_at, DocumentMetadata)
             .join(DocumentVersion, DocumentVersion.id == Document.current_version_id)
             .outerjoin(DocumentMetadata, DocumentMetadata.version_id == DocumentVersion.id)
-            .where(Document.user_id == user_id, Document.status == DocumentStatus.READY)
+            .where(user_cond, Document.status == DocumentStatus.READY)
         )
     ).all()
     indexed = [(doc, meta) for doc, indexed_at, meta in rows if indexed_at is not None]

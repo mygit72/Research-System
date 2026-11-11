@@ -89,6 +89,9 @@ async def public_config(settings: SettingsDep) -> PublicConfigResponse:
         local_only=settings.local_only,
         free_tier=settings.free_tier,
         download_url=settings.download_url,
+        demo_mode=settings.demo_mode,
+        uploads_enabled=settings.uploads_enabled if not settings.demo_mode else False,
+        github_url=settings.github_url,
     )
 
 

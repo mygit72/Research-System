@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
@@ -71,6 +72,7 @@ class Settings(BaseSettings):
     database_echo: bool = False
     redis_url: str | None = None
     qdrant_url: str | None = None  # None -> embedded local Qdrant (added in Phase 3)
+    vector_store: str = "qdrant"  # qdrant | pgvector
     storage_dir: Path = BACKEND_ROOT / "data" / "files"
 
     # --- Auth ----------------------------------------------------------------
@@ -87,6 +89,7 @@ class Settings(BaseSettings):
 
     # --- Jobs ----------------------------------------------------------------
     job_backend: JobBackend = JobBackend.INLINE
+    inline_job_concurrency: int = 1  # conservative concurrency for free-tier memory constraints
 
     # The code runner is a separate internal service. It launches disposable containers; the
     # API never executes a project's Python files in its own process.
@@ -221,6 +224,11 @@ class Settings(BaseSettings):
     llm_extra_body: dict[str, Any] = Field(default_factory=dict)
     # Where people can get the code to run their own copy; shown in Settings and Help when set.
     download_url: str = ""
+    # Public demo settings (locks down uploads, shares synthetic library, protects demo data)
+    demo_mode: bool = False
+    demo_user_id: uuid.UUID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+    uploads_enabled: bool = True
+    github_url: str = "https://github.com/mygit72/Research-System"
 
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -229,6 +237,36 @@ class Settings(BaseSettings):
             if value.strip().startswith("["):
                 return json.loads(value)
             return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
+
+    @field_validator("database_url", mode="after")
+    @classmethod
+    def _ensure_asyncpg_scheme(cls, value: str) -> str:
+        """Auto-transform bare ``postgresql://`` to ``postgresql+asyncpg://``.
+
+        Neon CLI writes ``postgresql://…`` with parameters like ``sslmode=require``
+        and ``channel_binding=require``. SQLAlchemy's asyncpg driver needs:
+        1. ``+asyncpg`` in the URL scheme
+        2. Removal of asyncpg-unsupported query parameters such as ``channel_binding``
+        and ``sslmode`` (asyncpg uses ssl kwarg / parameter rather than libpq sslmode).
+        """
+        if value.startswith("postgresql://"):
+            value = "postgresql+asyncpg://" + value[len("postgresql://"):]
+        
+        if "+asyncpg" in value and "?" in value:
+            from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
+            parsed = urlparse(value)
+            # Filter out parameters that asyncpg's connect() does not accept as kwargs
+            unsupported = {"channel_binding", "sslmode"}
+            query_params = [
+                (k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True)
+                if k.lower() not in unsupported
+            ]
+            # asyncpg accepts ssl=require directly in query params or defaults to ssl if ssl=true/require
+            # Keep any remaining valid parameters
+            new_query = urlencode(query_params)
+            value = urlunparse(parsed._replace(query=new_query))
         return value
 
     @property

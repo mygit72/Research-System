@@ -10,6 +10,17 @@ import type { ApiErrorBody, TokenResponse } from '@/types/api'
 
 export const API_BASE = '/api/v1'
 
+/**
+ * Direct upload URL override for environments where proxying imposes payload limits
+ * (such as Vercel's 4.5 MB edge ceiling). When VITE_API_DIRECT_URL is set (e.g.
+ * https://api.yourdomain.com), large uploads go directly to the backend over HTTPS
+ * with the in-memory Authorization Bearer token, bypassing the proxy.
+ * If unset, defaults to API_BASE (/api/v1) for same-origin proxy setups.
+ */
+export const UPLOAD_BASE = (import.meta.env.VITE_API_DIRECT_URL as string | undefined)?.replace(/\/$/, '')
+  ? `${(import.meta.env.VITE_API_DIRECT_URL as string).replace(/\/$/, '')}/api/v1`
+  : API_BASE
+
 export class ApiError extends Error {
   readonly status: number
   readonly code: string
@@ -162,7 +173,7 @@ export function uploadWithProgress<T>(
   const attempt = (retried: boolean): Promise<T> =>
     new Promise<T>((resolve, reject) => {
       const xhr = new XMLHttpRequest()
-      xhr.open('POST', `${API_BASE}${path}`)
+      xhr.open('POST', `${UPLOAD_BASE}${path}`)
       const token = hooks.getAccessToken()
       if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
       xhr.upload.onprogress = (event) => {

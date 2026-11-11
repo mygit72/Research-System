@@ -1,11 +1,13 @@
 import { useRef, useState, type DragEvent } from 'react'
-import { CheckCircle2, FileUp, RotateCcw, TriangleAlert, UploadCloud } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import { CheckCircle2, ExternalLink, FileUp, RotateCcw, TriangleAlert, UploadCloud } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/Button'
 import { Dialog } from '@/components/ui/Dialog'
 import { ProgressBar } from '@/components/ui/Feedback'
 import { cn } from '@/lib/cn'
 import { formatBytes } from '@/lib/format'
+import { systemApi } from '@/services/api'
 import { ACCEPTED_EXTENSIONS, ACCEPTED_LABEL, useUploads, type UploadItem } from '@/stores/uploads'
 
 export function UploadZone({ compact = false }: { compact?: boolean }) {
@@ -131,37 +133,72 @@ export function UploadDialog() {
   const busy = items.some((i) => i.state === 'pending' || i.state === 'uploading')
   const done = items.filter((i) => i.state === 'uploaded').length
 
+  const config = useQuery({ queryKey: ['config'], queryFn: systemApi.config, staleTime: Infinity })
+  const isDemo = Boolean(config.data?.demo_mode || config.data?.uploads_enabled === false)
+  const githubUrl = config.data?.github_url || 'https://github.com/mygit72/Research-System'
+
   return (
     <Dialog
       open={open}
       onOpenChange={setOpen}
-      title="Upload papers"
-      description="We'll read each paper, extract its structure and metadata, and index it."
+      title={isDemo ? 'Research Library — Demo Mode' : 'Upload papers'}
+      description={
+        isDemo
+          ? 'Explore the preloaded synthetic research papers or self-host the full application.'
+          : "We'll read each paper, extract its structure and metadata, and index it."
+      }
       className="max-w-xl"
     >
-      <UploadZone compact={items.length > 0} />
-      {items.length > 0 && (
-        <>
-          <ul className="mt-4 max-h-72 divide-y divide-border overflow-y-auto" aria-live="polite">
-            {items.map((item) => (
-              <UploadRow key={item.id} item={item} />
-            ))}
-          </ul>
-          <div className="mt-4 flex items-center justify-between gap-2">
-            <p className="text-caption text-muted">
-              {busy ? 'Uploading… you can close this window.' : `${done} uploaded`}
-            </p>
-            <div className="flex gap-2">
-              {!busy && (
-                <Button variant="ghost" size="sm" onClick={clearFinished}>
-                  Clear list
-                </Button>
-              )}
-              <Button size="sm" onClick={() => setOpen(false)}>
-                {busy ? 'Continue in background' : 'Done'}
-              </Button>
-            </div>
+      {isDemo ? (
+        <div className="rounded-lg border border-border bg-surface-muted/60 p-6 text-center">
+          <UploadCloud className="mx-auto size-10 text-muted" aria-hidden />
+          <h3 className="mt-3 text-body font-semibold text-text">Self-Hosted Uploads</h3>
+          <p className="mt-2 text-small text-muted leading-relaxed">
+            Document uploads and custom research libraries are available in the full self-hosted version.
+            Visit our GitHub repository to run Research Intelligence locally with unlimited papers and models.
+          </p>
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
+            <a
+              href={githubUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-small font-medium text-primary-contrast shadow transition hover:opacity-95"
+            >
+              <span>View GitHub Repository</span>
+              <ExternalLink className="size-4" />
+            </a>
+            <Button variant="secondary" size="sm" onClick={() => setOpen(false)}>
+              Explore Sample Papers
+            </Button>
           </div>
+        </div>
+      ) : (
+        <>
+          <UploadZone compact={items.length > 0} />
+          {items.length > 0 && (
+            <>
+              <ul className="mt-4 max-h-72 divide-y divide-border overflow-y-auto" aria-live="polite">
+                {items.map((item) => (
+                  <UploadRow key={item.id} item={item} />
+                ))}
+              </ul>
+              <div className="mt-4 flex items-center justify-between gap-2">
+                <p className="text-caption text-muted">
+                  {busy ? 'Uploading… you can close this window.' : `${done} uploaded`}
+                </p>
+                <div className="flex gap-2">
+                  {!busy && (
+                    <Button variant="ghost" size="sm" onClick={clearFinished}>
+                      Clear list
+                    </Button>
+                  )}
+                  <Button size="sm" onClick={() => setOpen(false)}>
+                    {busy ? 'Continue in background' : 'Done'}
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
         </>
       )}
     </Dialog>

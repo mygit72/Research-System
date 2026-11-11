@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
 
-from sqlalchemy import func, literal_column, select
+from sqlalchemy import func, literal_column, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
@@ -178,10 +178,15 @@ class PostgresFTSRetriever:
         # OR semantics like BM25 (websearch_to_tsquery would require every word to match).
         tsquery = func.to_tsquery(literal_column("'english'::regconfig"), " | ".join(words))
         score = func.ts_rank_cd(_TSVECTOR, tsquery).label("score")
+        user_cond = (
+            or_(Chunk.user_id == scope.user_id, Chunk.user_id == self.settings.demo_user_id)
+            if self.settings.demo_mode
+            else (Chunk.user_id == scope.user_id)
+        )
         statement = (
             select(Chunk.id, Chunk.document_id, Chunk.section_kind, score)
             .where(
-                Chunk.user_id == scope.user_id,
+                user_cond,
                 Chunk.version_id.in_(list(scope.versions)),
                 _TSVECTOR.op("@@")(tsquery),
             )

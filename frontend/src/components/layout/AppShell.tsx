@@ -64,6 +64,19 @@ export function AppShell() {
             </span>
           </button>
           <div className="ml-auto flex items-center gap-2">
+            {config.data?.demo_mode && (
+              <a
+                href={config.data.github_url || 'https://github.com/mygit72/Research-System'}
+                target="_blank"
+                rel="noreferrer"
+                className="hidden items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-caption font-medium text-primary transition hover:bg-primary/20 sm:inline-flex"
+                title="Public demonstration of Research Intelligence. Click to visit GitHub repository."
+              >
+                <span>Demo Mode</span>
+                <span className="text-subtle">•</span>
+                <span className="underline decoration-primary/40 underline-offset-2">GitHub</span>
+              </a>
+            )}
             <NotificationBell />
             <UserMenu />
           </div>

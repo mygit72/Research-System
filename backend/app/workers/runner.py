@@ -66,6 +66,12 @@ async def execute_job(job_id: uuid.UUID, session_factory: async_sessionmaker[Asy
             status = JobStatus.SUCCEEDED
         except JobFailedError as exc:
             error_message, error_detail = exc.user_message, exc.detail
+        except FileNotFoundError as exc:
+            error_message = (
+                "The source file is no longer available on disk (the server restarted or was "
+                "idle). Please re-upload or explore the preloaded sample papers."
+            )
+            error_detail = str(exc)
         except Exception:  # never let a job die silently
             error_message, error_detail = GENERIC_FAILURE_MESSAGE, traceback.format_exc()
         duration_ms = round((time.perf_counter() - started) * 1000, 1)

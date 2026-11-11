@@ -81,6 +81,12 @@ export interface PublicConfig {
   free_tier: boolean
   /** Where to get the code to run your own copy; '' when not published. */
   download_url: string
+  /** Public demonstration mode with preloaded synthetic research library. */
+  demo_mode?: boolean
+  /** Whether document uploads are accepted. */
+  uploads_enabled?: boolean
+  /** GitHub repository link. */
+  github_url?: string
 }
 
 export interface ApiErrorBody {

@@ -1,0 +1,56 @@
+services:
+  - type: web
+    name: research-intelligence-backend
+    runtime: docker
+    dockerfilePath: ./infra/docker/backend.Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: APP_NAME
+        value: "Research Intelligence"
+      - key: JOB_BACKEND
+        value: inline
+      - key: INLINE_JOB_CONCURRENCY
+        value: "1"
+      - key: VECTOR_STORE
+        value: pgvector
+      - key: DEMO_MODE
+        value: "true"
+      - key: UPLOADS_ENABLED
+        value: "false"
+      - key: GITHUB_URL
+        value: "https://github.com/mygit72/Research-System"
+      - key: RERANKER_PROVIDER
+        value: lexical
+      - key: WARM_MODELS_ON_STARTUP
+        value: "false"
+      - key: MODEL_DEVICE
+        value: cpu
+      - key: FREE_TIER
+        value: "true"
+      - key: FREE_TIER_LABEL
+        value: "NVIDIA Nemotron"
+      - key: FREE_TIER_HOST
+        value: "NVIDIA NIM"
+      - key: LLM_PROVIDER
+        value: openai
+      - key: LLM_API_BASE
+        value: https://integrate.api.nvidia.com/v1
+      - key: LLM_MODEL
+        value: nvidia/nemotron-3-ultra-550b-a55b
+      - key: LLM_EXTRA_BODY
+        value: '{"chat_template_kwargs": {"enable_thinking": false}}'
+      - key: DATABASE_URL
+        sync: false # Required: Neon connection string (postgresql+asyncpg://...)
+      - key: OPENAI_API_KEY
+        sync: false # Required: NVIDIA API key (nvapi-...)
+      - key: JWT_SECRET
+        generateValue: true # Render automatically generates a secure cryptographic secret
+      - key: CORS_ORIGINS
+        sync: false # Required: Vercel frontend URL, e.g. ["https://your-demo.vercel.app"]
+
