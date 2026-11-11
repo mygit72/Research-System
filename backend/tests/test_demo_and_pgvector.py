@@ -3,6 +3,7 @@
 import uuid
 import numpy as np
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
 from app.core.errors import PermissionDeniedError
@@ -105,4 +106,47 @@ def test_vector_store_factory_switching() -> None:
 
     s2 = get_vector_store(pg_settings)
     assert isinstance(s2, PgVectorStore)
+
+
+@pytest.mark.anyio
+async def test_ensure_shared_sample_library_idempotence(
+    app: object,
+    settings: Settings,
+) -> None:
+    from app.core.database import get_session_factory
+    from app.demo.shared_library import ensure_shared_sample_library
+    from app.models.document import Document
+    from app.models.user import User
+    from app.workers.dispatcher import get_dispatcher
+    from sqlalchemy import select
+
+    session_factory = get_session_factory()
+
+    # First bootstrap
+    res1 = await ensure_shared_sample_library(settings, session_factory)
+    assert res1["status"] in ("bootstrapped", "ready")
+    assert res1.get("total", res1.get("count")) == 3
+    await get_dispatcher(settings).drain()
+
+    # Check demo user
+    async with session_factory() as session:
+        user = await session.get(User, settings.demo_user_id)
+        assert user is not None
+        assert user.email == "demo.system@research-intelligence.local"
+        assert user.password_hash == "!disabled-demo-system-account"
+        assert user.is_active is True
+
+        # Check documents
+        docs = (
+            await session.execute(
+                select(Document).where(Document.user_id == settings.demo_user_id)
+            )
+        ).scalars().all()
+        assert len(docs) == 3
+
+    # Second bootstrap (must be idempotent and report ready without adding)
+    res2 = await ensure_shared_sample_library(settings, session_factory)
+    assert res2["status"] == "ready"
+    assert res2["count"] == 3
+
 

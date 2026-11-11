@@ -25,6 +25,9 @@ from app.models.organization import Collection, CollectionKind
 from app.models.user import User
 from app.services import organization as org
 from app.services.documents import DocumentService
+from app.services.jobs import JobService
+from app.services.storage import get_storage
+from app.workers.dispatcher import get_dispatcher
 
 log = get_logger(__name__)
 
@@ -49,7 +52,7 @@ async def ensure_shared_sample_library(
             demo_user = User(
                 id=demo_user_id,
                 email="demo.system@research-intelligence.local",
-                hashed_password="!disabled-demo-system-account",
+                password_hash="!disabled-demo-system-account",
                 full_name="Research Intelligence Demo",
                 is_active=True,
             )
@@ -75,7 +78,9 @@ async def ensure_shared_sample_library(
             return {"status": "ready", "count": len(existing_filenames)}
 
         # 3. Ingest missing sample papers
-        doc_service = DocumentService(session, settings)
+        storage = get_storage(settings)
+        job_service = JobService(session, get_dispatcher(settings))
+        doc_service = DocumentService(session, settings, storage, job_service)
         added_docs = []
         with tempfile.TemporaryDirectory() as tmp:
             for filename, paper in missing.items():
