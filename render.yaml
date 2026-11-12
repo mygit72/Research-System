@@ -27,6 +27,10 @@ services:
         value: "https://github.com/mygit72/Research-System"
       - key: RERANKER_PROVIDER
         value: lexical
+      - key: EMBEDDING_PROVIDER
+        value: hashing
+      - key: VERIFIER_PROVIDER
+        value: lexical
       - key: WARM_MODELS_ON_STARTUP
         value: "false"
       - key: MODEL_DEVICE
