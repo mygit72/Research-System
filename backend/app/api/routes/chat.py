@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, Query, Response, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import CurrentUser, DbSession, SettingsDep
@@ -72,7 +72,7 @@ async def list_conversations(
 
 @router.post("/conversations", response_model=ConversationOut, status_code=status.HTTP_201_CREATED)
 async def create_conversation(
-    body: ConversationCreate, user: CurrentUser, db: DbSession
+    body: ConversationCreate, user: CurrentUser, db: DbSession, settings: SettingsDep
 ) -> ConversationOut:
     ids = list(dict.fromkeys(body.document_ids))
     collection = None
@@ -82,10 +82,13 @@ async def create_conversation(
         if not ids:
             raise ValidationError("This collection has no papers yet.")
     if ids:
+        user_cond = (
+            or_(Document.user_id == user.id, Document.user_id == settings.demo_user_id)
+            if settings.demo_mode
+            else (Document.user_id == user.id)
+        )
         owned = await db.scalar(
-            select(func.count())
-            .select_from(Document)
-            .where(Document.id.in_(ids), Document.user_id == user.id)
+            select(func.count()).select_from(Document).where(Document.id.in_(ids), user_cond)
         )
         if owned != len(ids):
             raise ValidationError("Some of the selected papers don't exist.")
