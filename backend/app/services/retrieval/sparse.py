@@ -164,6 +164,9 @@ _TSVECTOR = func.to_tsvector(literal_column("'english'::regconfig"), Chunk.text)
 class PostgresFTSRetriever:
     name = "postgres_fts"
 
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+
     async def search(
         self, session: AsyncSession, scope: SearchScope, query: str, limit: int
     ) -> list[RetrievedPassage]:
@@ -209,7 +212,7 @@ _bm25 = BM25Retriever()
 
 def get_sparse_retriever(settings: Settings) -> SparseRetriever:
     if settings.sparse_retriever == "postgres":
-        return PostgresFTSRetriever()
+        return PostgresFTSRetriever(settings)
     if settings.sparse_retriever != "bm25":
         raise ServiceUnavailableError(f"Unknown sparse retriever “{settings.sparse_retriever}”.")
     _bm25.k1, _bm25.b = settings.bm25_k1, settings.bm25_b

@@ -333,7 +333,8 @@ async def search(
     if request.debug:
         for ranking in rankings.values():
             wanted_ids.extend(p.chunk_id for p in ranking)
-    chunks = await _load_chunks(session, user_id, list(dict.fromkeys(wanted_ids)))
+    demo_user_id = settings.demo_user_id if settings.demo_mode else None
+    chunks = await _load_chunks(session, user_id, list(dict.fromkeys(wanted_ids)), demo_user_id)
     documents = await _load_documents(session, {c.document_id for c in chunks.values()})
     query_terms = set(analyze(query))
 
@@ -418,12 +419,17 @@ async def search(
 
 
 async def _load_chunks(
-    session: AsyncSession, user_id: uuid.UUID, ids: list[Any]
+    session: AsyncSession, user_id: uuid.UUID, ids: list[Any], demo_user_id: uuid.UUID | None
 ) -> dict[uuid.UUID, Chunk]:
     found: dict[uuid.UUID, Chunk] = {}
+    user_cond = (
+        or_(Chunk.user_id == user_id, Chunk.user_id == demo_user_id)
+        if demo_user_id
+        else (Chunk.user_id == user_id)
+    )
     for start in range(0, len(ids), 500):
         rows = await session.execute(
-            select(Chunk).where(Chunk.id.in_(ids[start : start + 500]), Chunk.user_id == user_id)
+            select(Chunk).where(Chunk.id.in_(ids[start : start + 500]), user_cond)
         )
         found.update({c.id: c for c in rows.scalars()})
     return found
@@ -561,10 +567,15 @@ async def facets(session: AsyncSession, user_id: uuid.UUID) -> dict[str, Any]:
             if key:
                 keywords[key] += 1
                 display.setdefault(key, keyword.strip())
+    chunk_cond = (
+        or_(Chunk.user_id == user_id, Chunk.user_id == settings.demo_user_id)
+        if settings.demo_mode
+        else (Chunk.user_id == user_id)
+    )
     sections = await session.execute(
         select(Chunk.section_kind, func.count())
         .join(Document, Document.current_version_id == Chunk.version_id)
-        .where(Chunk.user_id == user_id)
+        .where(chunk_cond)
         .group_by(Chunk.section_kind)
     )
     return {

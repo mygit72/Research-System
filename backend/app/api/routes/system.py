@@ -126,7 +126,7 @@ async def ai_status(_user: CurrentUser, settings: SettingsDep) -> JSONResponse:
                 "rrf_k": settings.rrf_k,
             },
             "vector_store": {
-                "backend": "qdrant",
+                "backend": settings.vector_store,
                 "mode": "server" if settings.qdrant_url else "embedded",
             },
             "llm": await llm_status(settings),
