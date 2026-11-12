@@ -33,3 +33,19 @@ def cached_page_png(pdf_path: Path, cache_dir: Path, page_number: int, width: in
         tmp.write_bytes(render_page_png(pdf_path, page_number, width))
         tmp.replace(target)  # atomic: concurrent readers never see partial files
     return target
+
+
+def cached_thumbnail_png(pdf_path: Path, cache_dir: Path) -> Path:
+    """Same cache contract as `cached_page_png`, for the page-1 thumbnail.
+
+    Lets the thumbnail endpoint regenerate `thumb.png` on demand (it's a derived
+    cache file, same as a rendered page) instead of 404ing whenever it's missing
+    even though the original PDF it's generated from is right there.
+    """
+    target = cache_dir / "thumb.png"
+    if not target.exists():
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_suffix(".tmp")
+        tmp.write_bytes(render_page_png(pdf_path, 1, 320))
+        tmp.replace(target)
+    return target

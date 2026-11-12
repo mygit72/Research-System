@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Query
@@ -15,10 +16,13 @@ from fastapi.responses import FileResponse
 
 from app.api.deps import DbSession, SettingsDep
 from app.core.errors import NotFoundError, PermissionDeniedError
+from app.core.logging import get_logger
 from app.core.signing import verify_scope
 from app.models.document import DocumentVersion
-from app.services.ingestion.render import cached_page_png
-from app.services.storage import get_storage
+from app.services.ingestion.render import cached_page_png, cached_thumbnail_png
+from app.services.storage import FileStorage, get_storage
+
+log = get_logger(__name__)
 
 router = APIRouter(prefix="/assets", tags=["assets"])
 
@@ -40,14 +44,41 @@ async def _authorized_version(
     return version
 
 
+async def _resolve_original(
+    version: DocumentVersion, db: DbSession, settings: SettingsDep, storage: FileStorage
+) -> Path:
+    """The original file's on-disk path, self-healed first if missing.
+
+    Render's disk is ephemeral and can lose files mid-session, not just between
+    restarts, so relying solely on the startup bootstrap (app.demo.shared_library)
+    leaves a window where every request 500s until the next boot. Here, a miss
+    triggers a best-effort on-demand restore (a no-op for non-demo documents,
+    which have no packaged backup and so correctly stay 404).
+    """
+    path = storage.path(version.storage_key)
+    if path.exists() or not settings.demo_mode:
+        return path
+    from app.demo.shared_library import restore_version_file  # lazy: demo-only dependency
+
+    try:
+        await restore_version_file(db, settings, storage, version)
+    except Exception as exc:
+        log.warning("on_demand_file_restore_failed", version_id=str(version.id), error=repr(exc))
+    return storage.path(version.storage_key)
+
+
 @router.get("/versions/{version_id}/thumbnail.png")
 async def thumbnail(
     version_id: uuid.UUID, exp: Expires, sig: Signature, db: DbSession, settings: SettingsDep
 ) -> FileResponse:
-    await _authorized_version(version_id, exp, sig, db, settings)
-    path = get_storage(settings).derived_dir(version_id) / "thumb.png"
-    if not path.exists():
+    version = await _authorized_version(version_id, exp, sig, db, settings)
+    if not version.has_thumbnail:
         raise NotFoundError("No preview available.")
+    storage = get_storage(settings)
+    pdf_path = await _resolve_original(version, db, settings, storage)
+    if not pdf_path.exists():
+        raise NotFoundError("No preview available.")
+    path = await asyncio.to_thread(cached_thumbnail_png, pdf_path, storage.derived_dir(version_id))
     return FileResponse(path, media_type="image/png", headers=CACHE_HEADERS)
 
 
@@ -65,8 +96,13 @@ async def page_image(
     if not version.paginated or not version.page_count or not 1 <= page <= version.page_count:
         raise NotFoundError("That page doesn't exist.")
     storage = get_storage(settings)
+    pdf_path = await _resolve_original(version, db, settings, storage)
+    if not pdf_path.exists():
+        raise NotFoundError(
+            "The original file is missing.", hint="Reload in a moment; it may be restoring."
+        )
     path = await asyncio.to_thread(
-        cached_page_png, storage.path(version.storage_key), storage.derived_dir(version_id), page, w
+        cached_page_png, pdf_path, storage.derived_dir(version_id), page, w
     )
     return FileResponse(path, media_type="image/png", headers=CACHE_HEADERS)
 
@@ -76,7 +112,8 @@ async def original_file(
     version_id: uuid.UUID, exp: Expires, sig: Signature, db: DbSession, settings: SettingsDep
 ) -> FileResponse:
     version = await _authorized_version(version_id, exp, sig, db, settings)
-    path = get_storage(settings).path(version.storage_key)
+    storage = get_storage(settings)
+    path = await _resolve_original(version, db, settings, storage)
     if not path.exists():
         raise NotFoundError("The original file is missing.")
     # Only PDFs render inline; HTML etc. always download (never execute user HTML on our origin).

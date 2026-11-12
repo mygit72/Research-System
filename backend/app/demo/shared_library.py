@@ -35,7 +35,7 @@ from app.models.user import User
 from app.services import organization as org
 from app.services.documents import DocumentService
 from app.services.jobs import JobService
-from app.services.storage import get_storage
+from app.services.storage import FileStorage, get_storage
 from app.workers.dispatcher import get_dispatcher
 
 log = get_logger(__name__)
@@ -140,6 +140,48 @@ async def _reconcile_legacy_synthetic_records(
     return len(legacy_docs)
 
 
+async def restore_version_file(
+    session: AsyncSession,
+    settings: Settings,
+    storage: FileStorage,
+    version: DocumentVersion,
+    document: Document | None = None,
+) -> bool:
+    """Idempotent, best-effort: restore `version`'s original file from the packaged
+    demo asset if it is missing on disk and belongs to one of the 3 canonical demo
+    papers. A no-op (returns False) for every other document, including other
+    users' uploads, which have no packaged backup and so are correctly left alone.
+
+    Safe to call on every request that touches a demo asset, not just at startup:
+    Render's ephemeral disk can lose files mid-session (e.g. a redeploy or a
+    forced restart while the app is serving traffic), not only between restarts,
+    so self-healing only at process startup leaves a window where every page/
+    figure/thumbnail request 500s until the next boot. This closes that window.
+    """
+    path = storage.path(version.storage_key)
+    if path.exists():
+        return False
+    if document is None:
+        document = await session.get(Document, version.document_id)
+    if document is None or document.user_id != settings.demo_user_id:
+        return False
+    asset = RESEARCH_PAPERS.get(document.original_filename)
+    if asset is None:
+        return False
+    data = _get_paper_bytes(asset)
+    with tempfile.TemporaryDirectory() as tmp:
+        pdf_path = Path(tmp) / document.original_filename
+        pdf_path.write_bytes(data)
+        storage.save(pdf_path, version.storage_key)
+    log.info(
+        "demo_real_paper_file_restored",
+        filename=document.original_filename,
+        document_id=str(document.id),
+        storage_key=version.storage_key,
+    )
+    return True
+
+
 async def _restore_missing_files(
     session: AsyncSession,
     settings: Settings,
@@ -170,51 +212,36 @@ async def _restore_missing_files(
         )
     ).scalars().all()
 
-    with tempfile.TemporaryDirectory() as tmp:
-        for doc in docs:
-            version: DocumentVersion | None = doc.current_version
-            if version is None and doc.current_version_id is not None:
-                version = await session.get(DocumentVersion, doc.current_version_id)
-            if version is None:
-                continue
+    for doc in docs:
+        version: DocumentVersion | None = doc.current_version
+        if version is None and doc.current_version_id is not None:
+            version = await session.get(DocumentVersion, doc.current_version_id)
+        if version is None:
+            continue
 
-            file_path = storage.path(version.storage_key)
-            need_file = not file_path.exists()
-            asset = RESEARCH_PAPERS.get(doc.original_filename)
+        if await restore_version_file(session, settings, storage, version, document=doc):
+            restored += 1
 
-            if need_file and asset:
-                data = _get_paper_bytes(asset)
-                pdf_path = Path(tmp) / doc.original_filename
-                pdf_path.write_bytes(data)
-                storage.save(pdf_path, version.storage_key)
-                restored += 1
-                log.info(
-                    "demo_real_paper_file_restored",
-                    filename=doc.original_filename,
-                    document_id=str(doc.id),
-                    storage_key=version.storage_key,
-                )
-
-            # Re-enqueue failed documents for processing.
-            if doc.status == DocumentStatus.FAILED:
-                dispatcher = get_dispatcher(settings)
-                job_service = JobService(session, dispatcher)
-                doc.status = DocumentStatus.QUEUED
-                doc.error_message = None
-                job = await job_service.enqueue(
-                    doc.user_id,
-                    "document.process",
-                    payload={"version_id": str(version.id)},
-                    subject_type="document",
-                    subject_id=doc.id,
-                )
-                doc.processing_job_id = job.id
-                reenqueued += 1
-                log.info(
-                    "demo_job_reenqueued",
-                    document_id=str(doc.id),
-                    job_id=str(job.id),
-                )
+        # Re-enqueue failed documents for processing.
+        if doc.status == DocumentStatus.FAILED:
+            dispatcher = get_dispatcher(settings)
+            job_service = JobService(session, dispatcher)
+            doc.status = DocumentStatus.QUEUED
+            doc.error_message = None
+            job = await job_service.enqueue(
+                doc.user_id,
+                "document.process",
+                payload={"version_id": str(version.id)},
+                subject_type="document",
+                subject_id=doc.id,
+            )
+            doc.processing_job_id = job.id
+            reenqueued += 1
+            log.info(
+                "demo_job_reenqueued",
+                document_id=str(doc.id),
+                job_id=str(job.id),
+            )
 
     if restored or reenqueued:
         await session.commit()
