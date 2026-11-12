@@ -18,7 +18,6 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.core.errors import ServiceUnavailableError
 from app.models.document import Document, DocumentMetadata, DocumentVersion, IndexStatus
 from app.services.vectorstore import VectorFilter, collection_name, get_vector_store
 
@@ -102,62 +101,59 @@ async def similar_documents(
     name = collection_name("documents", version.embedding_model, version.embedding_dimension)
     store = get_vector_store(settings)
 
-    try:
-        def query() -> list[tuple[uuid.UUID, float]]:
-            vector = store.get_vector(name, document.id)
-            if vector is None:
-                return []
-            hits = store.search(
-                name, vector, VectorFilter(user_id=user_id, exclude_document_ids=[document.id]), limit
+    def query() -> list[tuple[uuid.UUID, float]]:
+        vector = store.get_vector(name, document.id)
+        if vector is None:
+            return []
+        hits = store.search(
+            name, vector, VectorFilter(user_id=user_id, exclude_document_ids=[document.id]), limit
+        )
+        return [(hit.id, hit.score) for hit in hits]
+
+    hits = await asyncio.to_thread(query)
+    if not hits:
+        return "no_other_papers", []
+
+    user_cond = (
+        or_(Document.user_id == user_id, Document.user_id == settings.demo_user_id)
+        if settings.demo_mode
+        else (Document.user_id == user_id)
+    )
+    ids = [document.id, *(doc_id for doc_id, _ in hits)]
+    rows = await session.execute(
+        select(Document, DocumentMetadata)
+        .outerjoin(DocumentMetadata, DocumentMetadata.version_id == Document.current_version_id)
+        .where(Document.id.in_(ids), user_cond)
+    )
+    by_id = {doc.id: (doc, meta) for doc, meta in rows.all()}
+    all_meta = await session.execute(
+        select(Document.title, DocumentMetadata)
+        .outerjoin(DocumentMetadata, DocumentMetadata.version_id == Document.current_version_id)
+        .where(user_cond)
+    )
+    library = [(title, meta) for title, meta in all_meta.all()]
+    document_frequency: Counter[str] = Counter()
+    for title, meta in library:
+        document_frequency.update(set(_terms(meta, title)))
+
+    base_doc, base_meta = by_id[document.id]
+    results = []
+    for doc_id, score in hits:
+        if doc_id not in by_id:
+            continue  # stale vector for a deleted paper
+        other_doc, other_meta = by_id[doc_id]
+        results.append(
+            SimilarPaper(
+                document_id=doc_id,
+                score=round(score, 4),
+                reasons=explain(
+                    base_meta,
+                    base_doc.title,
+                    other_meta,
+                    other_doc.title,
+                    document_frequency,
+                    len(library),
+                ),
             )
-            return [(hit.id, hit.score) for hit in hits]
-
-        hits = await asyncio.to_thread(query)
-        if not hits:
-            return "no_other_papers", []
-
-        user_cond = (
-            or_(Document.user_id == user_id, Document.user_id == settings.demo_user_id)
-            if settings.demo_mode
-            else (Document.user_id == user_id)
         )
-        ids = [document.id, *(doc_id for doc_id, _ in hits)]
-        rows = await session.execute(
-            select(Document, DocumentMetadata)
-            .outerjoin(DocumentMetadata, DocumentMetadata.version_id == Document.current_version_id)
-            .where(Document.id.in_(ids), user_cond)
-        )
-        by_id = {doc.id: (doc, meta) for doc, meta in rows.all()}
-        all_meta = await session.execute(
-            select(Document.title, DocumentMetadata)
-            .outerjoin(DocumentMetadata, DocumentMetadata.version_id == Document.current_version_id)
-            .where(user_cond)
-        )
-        library = [(title, meta) for title, meta in all_meta.all()]
-        document_frequency: Counter[str] = Counter()
-        for title, meta in library:
-            document_frequency.update(set(_terms(meta, title)))
-
-        base_doc, base_meta = by_id[document.id]
-        results = []
-        for doc_id, score in hits:
-            if doc_id not in by_id:
-                continue  # stale vector for a deleted paper
-            other_doc, other_meta = by_id[doc_id]
-            results.append(
-                SimilarPaper(
-                    document_id=doc_id,
-                    score=round(score, 4),
-                    reasons=explain(
-                        base_meta,
-                        base_doc.title,
-                        other_meta,
-                        other_doc.title,
-                        document_frequency,
-                        len(library),
-                    ),
-                )
-            )
-        return "ok", results
-    except Exception as exc:  # TEMP DIAGNOSTIC: surface the real error, remove once found
-        raise ServiceUnavailableError(f"DEBUG {type(exc).__module__}.{type(exc).__name__}: {exc}"[:500]) from exc
+    return "ok", results

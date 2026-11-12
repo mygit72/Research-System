@@ -572,7 +572,7 @@ class PgVectorStore:
                     row = cur.fetchone()
                     if not row or row[0] is None:
                         return None
-                    return np.asarray(row[0], dtype=np.float32)
+                    return row[0].to_numpy()
         except psycopg.errors.UndefinedTable:
             return None
 
@@ -597,7 +597,7 @@ class PgVectorStore:
                     )
                     rows = cur.fetchall()
             return {
-                uuid.UUID(str(r[0])): np.asarray(r[1], dtype=np.float32)
+                uuid.UUID(str(r[0])): r[1].to_numpy()
                 for r in rows
                 if r[1] is not None
             }
