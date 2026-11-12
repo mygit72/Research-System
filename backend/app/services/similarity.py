@@ -14,7 +14,7 @@ import uuid
 from collections import Counter
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
@@ -114,17 +114,22 @@ async def similar_documents(
     if not hits:
         return "no_other_papers", []
 
+    user_cond = (
+        or_(Document.user_id == user_id, Document.user_id == settings.demo_user_id)
+        if settings.demo_mode
+        else (Document.user_id == user_id)
+    )
     ids = [document.id, *(doc_id for doc_id, _ in hits)]
     rows = await session.execute(
         select(Document, DocumentMetadata)
         .outerjoin(DocumentMetadata, DocumentMetadata.version_id == Document.current_version_id)
-        .where(Document.id.in_(ids), Document.user_id == user_id)
+        .where(Document.id.in_(ids), user_cond)
     )
     by_id = {doc.id: (doc, meta) for doc, meta in rows.all()}
     all_meta = await session.execute(
         select(Document.title, DocumentMetadata)
         .outerjoin(DocumentMetadata, DocumentMetadata.version_id == Document.current_version_id)
-        .where(Document.user_id == user_id)
+        .where(user_cond)
     )
     library = [(title, meta) for title, meta in all_meta.all()]
     document_frequency: Counter[str] = Counter()
